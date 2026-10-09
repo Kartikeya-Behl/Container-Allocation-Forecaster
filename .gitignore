@@ -1,0 +1,55 @@
+# Raw and interim data (can be large; never commit)
+data/raw/
+data/interim/
+
+# Processed data: only commit files smaller than 50 MB (use git-lfs or manual review)
+# Large parquet/csv files in processed are excluded by extension below if needed
+# data/processed/*.parquet  # uncomment if processed files grow > 50 MB
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# Results (auto-generated; committed selectively)
+# Keep results/ tracked, but exclude any accidentally large files
+results/**/*.pkl
+results/**/*.joblib
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Temp extraction files
+handover_raw.txt
+*.tmp
+*.log
+
+# Large model artefacts
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.onnx
+
+# Secrets / env files
+.env
+*.secret

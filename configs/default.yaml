@@ -1,0 +1,43 @@
+# Default configuration for container-forecast project.
+# All paths are relative to the repository root.
+# DO NOT change split ratios or seed without updating AGENTS.md and logging the reason.
+
+seed: 42
+
+# Sampling interval (seconds). Alibaba v2022 MSResource is 60 s.
+interval_s: 60
+
+# Chronological train / val / test proportions. Must sum to 1.0. NEVER shuffle.
+split:
+  train: 0.70
+  val:   0.15
+  test:  0.15
+
+# Forecast horizons in steps (1 step = interval_s seconds).
+# horizon 1  -> next interval (60 s ahead)
+# horizon 5  -> ~5 minutes ahead
+horizons_steps: [1, 5]
+
+# Lag feature indices (past steps used as features; strictly t-1 and earlier).
+lags: [1, 2, 3, 5, 10]
+
+# Safety margin search grid for validation tuning (proactive rule).
+margin_grid: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+
+# Static baseline percentile (fit on train only).
+static_percentile: 95
+
+# Minimum number of complete-series containers to keep after cleaning.
+min_containers: 200
+
+# Minimum number of timesteps required for a series to be considered complete.
+# 4 hours at 60 s = 240 steps. Set lower for v2017 (144 steps at 300 s).
+min_series_length: 240
+
+# Data paths
+paths:
+  raw:       data/raw
+  interim:   data/interim
+  processed: data/processed
+  results:   results
+  notebooks: notebooks
