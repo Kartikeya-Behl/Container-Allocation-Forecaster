@@ -54,7 +54,7 @@ def get_remote_file_size(url: str, ctx: ssl.SSLContext) -> int | None:
         return None
 
 
-def download_part(url: str, part_file: Path, start_byte: int, end_byte: int, ctx: ssl.SSLContext, max_retries: int = 5) -> None:
+def download_part(url: str, part_file: Path, start_byte: int, end_byte: int, ctx: ssl.SSLContext, max_retries: int = 15) -> None:
     expected_bytes = end_byte - start_byte + 1
     for attempt in range(max_retries):
         existing = part_file.stat().st_size if part_file.exists() else 0
@@ -77,8 +77,8 @@ def download_part(url: str, part_file: Path, start_byte: int, end_byte: int, ctx
 
             if part_file.stat().st_size >= expected_bytes:
                 return
-        except Exception as e:
-            time.sleep(2)
+        except Exception:
+            time.sleep(min(3 * (attempt + 1), 15))
 
     if part_file.stat().st_size < expected_bytes:
         raise RuntimeError(f"Part {part_file.name} failed after {max_retries} attempts.")
