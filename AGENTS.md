@@ -77,5 +77,24 @@
 
 - Every model evaluation appends rows to `results/metrics_long.csv` with columns:
   `run_id, dataset, model, horizon_steps, target(cpu|mem), container_id, split, mae, rmse, smape, train_time_s, pred_latency_ms, model_size_kb, seed`.
-- Test-split predictions are saved to `results/predictions/<dataset>_<model>_h<H>_<target>.parquet` with columns `container_id, timestamp, y_true, y_pred`.
-- Never overwrite old runs; append.
+- Predictions for **both val and test** splits are saved to `results/predictions/<dataset>_<model>_h<H>_<target>.parquet` with columns `container_id, origin_step, target_step, split, y_true, y_pred`. Val predictions are needed to tune the safety margin; test predictions are for final reporting.
+- Never overwrite old runs; append. If a predictions file already exists, append with a new run_id so both sets are preserved.
+- Tuning logs go to `results/tuning/`; best hyperparameters are saved to `results/tuning/best_params.json`; all tuning records are append-only with a run_id.
+
+## 13. Primary Dataset
+
+- **Primary dataset:** `data/processed/alibaba_v2022_8h.parquet` (600 containers × 480 steps, dataset tag `alibaba8h`).
+- The 4-hour file (`alibaba_v2022.parquet`) is used only for robustness / ablation checks, **not** for primary results.
+- All metric rows and prediction files use dataset tag `alibaba8h` for the primary dataset.
+
+## 14. Forecasting-Origin Rule
+
+- A forecast made at **origin step t** may use only observations at steps **≤ t** (strictly no look-ahead).
+- A supervised row belongs to the split of its **target step** (t + h), not its origin step t.
+  - Train rows: target_step < train_end (= 336 for 480 steps).
+  - Val rows: val_start ≤ target_step < val_end.
+  - Test rows: test_start ≤ target_step < test_end.
+- Val and test rows may legitimately use lag features drawn from earlier splits (the observation history before t is real past data).
+- **Never** compute split membership from the origin step t; always use the target step t + h.
+- Split bounds are always computed from `split_bounds(n_steps, fracs)` in `src/data/loader.py`. **Never hard-code** step numbers.
+
