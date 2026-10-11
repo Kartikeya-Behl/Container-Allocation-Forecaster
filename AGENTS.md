@@ -71,7 +71,11 @@
 
 ## 11. Credit Economy
 
-- **Credit economy**: batch steps, minimal prose, no unrequested refactors or docs.
+- Write each file once. Do not view files you just wrote. Do not re-read parts of AGENTS.md you do not need.
+- No exploratory or scratch scripts and no testing of alternatives unless a test fails.
+- Run pytest at most twice (once at the end, once more only after fixing failures). Run each validation run once.
+- Never poll or wait on long jobs. Give the command and let the user run it.
+- The final message contains only the items requested. No recap of what you did, no emojis, no tables of file links.
 
 ## 12. Results Schema
 
