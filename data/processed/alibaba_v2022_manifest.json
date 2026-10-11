@@ -1,0 +1,26 @@
+{
+  "dataset": "alibaba_microservices_v2022",
+  "parameters": {
+    "start_hour": 12,
+    "hours": 4,
+    "seed": 42,
+    "max_per_service": 3,
+    "n_final": 600,
+    "n_steps": 240,
+    "train_steps": 168,
+    "first_hour_steps": 60,
+    "step_interval_ms": 60000,
+    "cpu_std_min": 0.005,
+    "mem_std_min": 0.001
+  },
+  "stage_container_counts": {
+    "stage_a_candidates": 5000,
+    "stage_b_streamed": 5000,
+    "stage_c_deduped": 5000,
+    "stage_d_window_complete": 4845,
+    "stage_e_train_variance_filtered": 924,
+    "stage_f_final_selected": 600
+  },
+  "total_rows": 144000,
+  "parquet_file": "data\\processed\\alibaba_v2022.parquet"
+}
