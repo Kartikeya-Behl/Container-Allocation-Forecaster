@@ -19,37 +19,32 @@ import pandas as pd
 import pytest
 
 from data.build_dataset import run_pipeline, validate_dataset
+from data.loader import split_bounds
 
 
-@pytest.fixture
-def synthetic_data_dir(tmp_path):
-    """Generate tiny synthetic CSV files simulating 4-hour (240 step) traces."""
-    # We will simulate 2 CSV files (e.g. 1st half and 2nd half, or 8 files)
-    # Total steps: 240. Steps 0..119 in file1, steps 120..239 in file2.
-    # T0 = 43200000 ms. Step interval = 60,000 ms.
+def make_synthetic_csvs(tmp_path: Path, hours: int, n_steps: int) -> tuple[Path, list[Path]]:
+    """Generate synthetic CSV files simulating traces for given hours and steps."""
     t0 = 43_200_000
     step_ms = 60_000
-    timestamps = [t0 + i * step_ms for i in range(240)]
-
-    rng = np.random.RandomState(42)
+    timestamps = [t0 + i * step_ms for i in range(n_steps)]
+    train_bounds, _, _ = split_bounds(n_steps)
+    train_steps = train_bounds[1]
 
     rows = []
 
     # 1. Container: "valid_svc1_c1", service: "MS_A"
-    # Good variance in both train and test
     for i, t in enumerate(timestamps):
         cpu = 0.20 + 0.05 * np.sin(i / 10.0)
         mem = 0.50 + 0.02 * np.cos(i / 10.0)
         rows.append({"timestamp": t, "msname": "MS_A", "msinstanceid": "valid_svc1_c1", "cpu_utilization": cpu, "memory_utilization": mem})
 
     # 2. Container: "valid_svc1_c2", service: "MS_A"
-    # Also valid
     for i, t in enumerate(timestamps):
         cpu = 0.30 + 0.04 * np.cos(i / 5.0)
         mem = 0.40 + 0.03 * np.sin(i / 5.0)
         rows.append({"timestamp": t, "msname": "MS_A", "msinstanceid": "valid_svc1_c2", "cpu_utilization": cpu, "memory_utilization": mem})
 
-    # 3. Containers 3, 4, 5 for "MS_A": to test per-service cap (max 3 per service)
+    # 3. Extra containers for "MS_A" to test per-service cap
     for extra_id in ["valid_svc1_c3", "valid_svc1_c4", "valid_svc1_c5"]:
         for i, t in enumerate(timestamps):
             cpu = 0.15 + 0.03 * np.sin(i / 8.0)
@@ -57,11 +52,9 @@ def synthetic_data_dir(tmp_path):
             rows.append({"timestamp": t, "msname": "MS_A", "msinstanceid": extra_id, "cpu_utilization": cpu, "memory_utilization": mem})
 
     # 4. Container: "flat_in_train_wild_in_test", service: "MS_B"
-    # First 168 steps: STRICTLY FLAT (cpu=0.25, mem=0.50 -> std=0.0)
-    # Last 72 steps (168..239): WILD variations (cpu 0.1 to 0.9, mem 0.2 to 0.8)
-    # MUST BE REJECTED by train-only variance filter!
+    # Train portion: strictly flat (std=0). Val/test portion: oscillates wildly.
     for i, t in enumerate(timestamps):
-        if i < 168:
+        if i < train_steps:
             cpu = 0.25
             mem = 0.50
         else:
@@ -69,56 +62,53 @@ def synthetic_data_dir(tmp_path):
             mem = 0.20 if (i % 2 == 0) else 0.80
         rows.append({"timestamp": t, "msname": "MS_B", "msinstanceid": "flat_in_train_wild_in_test", "cpu_utilization": cpu, "memory_utilization": mem})
 
-    # 5. Container: "gapped_container", service: "MS_C"
-    # Missing step 50
+    # 5. Container: "gapped_container", service: "MS_C" (missing step 50)
     for i, t in enumerate(timestamps):
         if i == 50:
-            continue  # gap!
+            continue
         cpu = 0.20 + 0.05 * np.sin(i / 10.0)
         mem = 0.50 + 0.02 * np.cos(i / 10.0)
         rows.append({"timestamp": t, "msname": "MS_C", "msinstanceid": "gapped_container", "cpu_utilization": cpu, "memory_utilization": mem})
 
-    # 6. Container: "dup_container", service: "MS_D"
-    # Valid, but has a duplicate at step 10:
-    # row 1: cpu=0.20, mem=0.40; row 2: cpu=0.40, mem=0.60 -> mean must be 0.30 and 0.50
+    # 6. Container: "dup_container", service: "MS_D" (duplicate at step 10)
     for i, t in enumerate(timestamps):
         cpu = 0.20 + 0.05 * np.sin(i / 10.0)
         mem = 0.50 + 0.02 * np.cos(i / 10.0)
         rows.append({"timestamp": t, "msname": "MS_D", "msinstanceid": "dup_container", "cpu_utilization": cpu, "memory_utilization": mem})
         if i == 10:
-            # duplicate with higher values
             rows.append({"timestamp": t, "msname": "MS_D", "msinstanceid": "dup_container", "cpu_utilization": cpu + 0.20, "memory_utilization": mem + 0.20})
 
     df = pd.DataFrame(rows)
 
-    # Split into 2 CSV files (first half steps < 120, second half >= 120)
-    split_t = t0 + 120 * step_ms
-    df_part1 = df[df["timestamp"] < split_t].sample(frac=1.0, random_state=42)  # shuffled order in raw file
+    # Split into 2 CSV files
+    split_t = t0 + (n_steps // 2) * step_ms
+    df_part1 = df[df["timestamp"] < split_t].sample(frac=1.0, random_state=42)
     df_part2 = df[df["timestamp"] >= split_t].sample(frac=1.0, random_state=42)
 
-    p1 = tmp_path / "part1.csv"
-    p2 = tmp_path / "part2.csv"
+    p1 = tmp_path / f"part1_{n_steps}.csv"
+    p2 = tmp_path / f"part2_{n_steps}.csv"
     df_part1.to_csv(p1, index=False)
     df_part2.to_csv(p2, index=False)
 
     return tmp_path, [p1, p2]
 
 
-def test_build_dataset_full_pipeline(synthetic_data_dir):
-    tmp_path, csv_paths = synthetic_data_dir
-    out_parquet = tmp_path / "out.parquet"
-    manifest_path = tmp_path / "out_manifest.json"
+@pytest.mark.parametrize("hours,n_steps", [(4, 240), (8, 480)])
+def test_build_dataset_full_pipeline(tmp_path, hours, n_steps):
+    _, csv_paths = make_synthetic_csvs(tmp_path, hours, n_steps)
+    out_parquet = tmp_path / f"out_{n_steps}.parquet"
+    manifest_path = tmp_path / f"out_{n_steps}_manifest.json"
 
     df_out, manifest = run_pipeline(
         csv_paths=csv_paths,
         out_parquet=out_parquet,
         manifest_path=manifest_path,
         start_hour=12,
-        hours=4,
+        hours=hours,
         seed=42,
         max_per_service=3,
         n_final=10,
-        n_steps=240,
+        n_steps=n_steps,
         first_hour_steps=60,
     )
 
@@ -143,7 +133,6 @@ def test_build_dataset_full_pipeline(synthetic_data_dir):
     assert "dup_container" in surviving_containers
     dup_step10 = df_out[(df_out["container_id"] == "dup_container") & (df_out["step"] == 10)]
     assert len(dup_step10) == 1
-    # Original base at step 10 was: 0.20 + 0.05 * sin(1), dup was base + 0.20 -> mean is base + 0.10
     base_cpu = 0.20 + 0.05 * np.sin(10 / 10.0)
     expected_cpu = base_cpu + 0.10
     assert abs(dup_step10["cpu"].iloc[0] - expected_cpu) < 1e-5
@@ -152,29 +141,31 @@ def test_build_dataset_full_pipeline(synthetic_data_dir):
     ms_a_containers = df_out[df_out["msname"] == "MS_A"]["container_id"].unique()
     assert len(ms_a_containers) <= 3, f"Expected <= 3 containers for MS_A, got {len(ms_a_containers)}"
 
-    # 6. Step count invariant: each surviving container must have exactly 240 steps
+    # 6. Step count invariant: each surviving container must have exactly n_steps steps
     for inst in surviving_containers:
         inst_df = df_out[df_out["container_id"] == inst]
-        assert len(inst_df) == 240
-        assert inst_df["step"].tolist() == list(range(240))
+        assert len(inst_df) == n_steps
+        assert inst_df["step"].tolist() == list(range(n_steps))
 
     # 7. Manifest validation
     with manifest_path.open() as f:
         m = json.load(f)
     assert m["parameters"]["seed"] == 42
+    assert m["parameters"]["n_steps"] == n_steps
     assert "stage_container_counts" in m
     assert m["total_rows"] == len(df_out)
 
 
-def test_validate_dataset_raises_on_invalid_data():
+@pytest.mark.parametrize("expected_steps", [240, 480])
+def test_validate_dataset_raises_on_invalid_data(expected_steps):
     # Corrupt data with missing row
     bad_df = pd.DataFrame({
-        "container_id": ["c1"] * 239,  # 239 instead of 240
-        "msname": ["s1"] * 239,
-        "timestamp_ms": [43200000 + i * 60000 for i in range(239)],
-        "step": list(range(239)),
-        "cpu": [0.2] * 239,
-        "mem": [0.5] * 239,
+        "container_id": ["c1"] * (expected_steps - 1),
+        "msname": ["s1"] * (expected_steps - 1),
+        "timestamp_ms": [43200000 + i * 60000 for i in range(expected_steps - 1)],
+        "step": list(range(expected_steps - 1)),
+        "cpu": [0.2] * (expected_steps - 1),
+        "mem": [0.5] * (expected_steps - 1),
     })
     with pytest.raises(AssertionError):
-        validate_dataset(bad_df, expected_steps=240)
+        validate_dataset(bad_df, expected_steps=expected_steps)

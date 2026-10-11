@@ -17,10 +17,21 @@ Outputs:
       results/eda/containers_sample_grid.png
 """
 
+import argparse
 from pathlib import Path
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+try:
+    from data.loader import split_bounds
+except ImportError:
+    try:
+        from src.data.loader import split_bounds
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from data.loader import split_bounds
 
 
 def df_to_md(df: pd.DataFrame) -> str:
@@ -71,18 +82,21 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # Invariants
     n_containers = df["container_id"].nunique()
     total_steps = df["step"].nunique()
-    assert n_containers == 600
-    assert total_steps == 240
+    assert n_containers == 600, f"Expected 600 containers, found {n_containers}"
+    assert total_steps > 0, "No steps found in dataset"
 
-    train_mask = df["step"] <= 167
-    val_mask = (df["step"] >= 168) & (df["step"] <= 203)
-    test_mask = df["step"] >= 204
+    # Compute exact chronological split boundaries
+    (train_start, train_end), (val_start, val_end), (test_start, test_end) = split_bounds(total_steps)
+
+    train_mask = (df["step"] >= train_start) & (df["step"] < train_end)
+    val_mask = (df["step"] >= val_start) & (df["step"] < val_end)
+    test_mask = (df["step"] >= test_start) & (df["step"] < test_end)
 
     df_train = df[train_mask]
     df_val = df[val_mask]
     df_test = df[test_mask]
 
-    # Container pivots for vector math [600, 240]
+    # Container pivots for vector math [n_containers, total_steps]
     pivot_cpu = df.pivot(index="container_id", columns="step", values="cpu")
     pivot_mem = df.pivot(index="container_id", columns="step", values="mem")
     container_names = pivot_cpu.index.tolist()
@@ -91,8 +105,13 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # 1. Distribution per split
     # -----------------------------------------------------------------------
     dist_stats = []
+    split_specs = [
+        (f"Train ({train_start}-{train_end-1})", df_train),
+        (f"Val ({val_start}-{val_end-1})", df_val),
+        (f"Test ({test_start}-{test_end-1})", df_test),
+    ]
     for var_name, col in [("cpu", "cpu"), ("mem", "mem")]:
-        for split_name, sub_df in [("Train (0-167)", df_train), ("Val (168-203)", df_val), ("Test (204-239)", df_test)]:
+        for split_name, sub_df in split_specs:
             v = sub_df[col].values
             dist_stats.append({
                 "Metric": var_name.upper(),
@@ -110,8 +129,8 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # -----------------------------------------------------------------------
     shift_results = []
     for var_name, pivot_df in [("cpu", pivot_cpu), ("mem", pivot_mem)]:
-        arr_train = pivot_df.iloc[:, 0:168].values
-        arr_test = pivot_df.iloc[:, 204:240].values
+        arr_train = pivot_df.iloc[:, train_start:train_end].values
+        arr_test = pivot_df.iloc[:, test_start:test_end].values
 
         mean_train = np.mean(arr_train, axis=1)
         std_train = np.std(arr_train, axis=1, ddof=1)
@@ -142,7 +161,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # -----------------------------------------------------------------------
     cs_mean_cpu = pivot_cpu.mean(axis=0).values
     cs_mean_mem = pivot_mem.mean(axis=0).values
-    steps = np.arange(240)
+    steps = np.arange(total_steps)
 
     # Step-to-step differences
     diff_cs_cpu = np.diff(cs_mean_cpu)
@@ -156,18 +175,18 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # Plot cross-sectional mean series
     fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
     axes[0].plot(steps, cs_mean_cpu, color="tab:blue", lw=1.8, label="Cross-Sectional Mean CPU")
-    axes[0].axvline(168, color="black", linestyle="--", alpha=0.7, label="Val Start (step 168)")
-    axes[0].axvline(204, color="crimson", linestyle="--", alpha=0.7, label="Test Start (step 204)")
+    axes[0].axvline(train_end, color="black", linestyle="--", alpha=0.7, label=f"Val Start (step {train_end})")
+    axes[0].axvline(val_end, color="crimson", linestyle="--", alpha=0.7, label=f"Test Start (step {val_end})")
     axes[0].set_ylabel("Mean CPU Util")
-    axes[0].set_title("Cross-Sectional Mean Series Across 600 Containers")
+    axes[0].set_title(f"Cross-Sectional Mean Series Across {n_containers} Containers")
     axes[0].grid(True, linestyle=":", alpha=0.6)
     axes[0].legend(loc="upper right")
 
     axes[1].plot(steps, cs_mean_mem, color="tab:orange", lw=1.8, label="Cross-Sectional Mean Mem")
-    axes[1].axvline(168, color="black", linestyle="--", alpha=0.7)
-    axes[1].axvline(204, color="crimson", linestyle="--", alpha=0.7)
+    axes[1].axvline(train_end, color="black", linestyle="--", alpha=0.7)
+    axes[1].axvline(val_end, color="crimson", linestyle="--", alpha=0.7)
     axes[1].set_ylabel("Mean Mem Util")
-    axes[1].set_xlabel("Timestep (60 s intervals, 0..239)")
+    axes[1].set_xlabel(f"Timestep (60 s intervals, 0..{total_steps-1})")
     axes[1].grid(True, linestyle=":", alpha=0.6)
     axes[1].legend(loc="upper right")
 
@@ -186,7 +205,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
         frac_zero = float(np.mean(arr == 0.0))
         # Containers with > 10% steps at cap (>= 0.99)
         cap_counts_per_container = np.sum(arr >= 0.99, axis=1)
-        containers_high_cap = int(np.sum(cap_counts_per_container > 0.10 * 240))
+        containers_high_cap = int(np.sum(cap_counts_per_container > 0.10 * total_steps))
 
         sat_results.append({
             "Metric": var_name.upper(),
@@ -253,7 +272,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     for i in range(n_containers):
         c_id = container_names[i]
         series = arr_mem[i, :]
-        for t in range(1, 240):
+        for t in range(1, total_steps):
             prev_val = series[t - 1]
             cur_val = series[t]
             if prev_val > 1e-4:
@@ -296,12 +315,12 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     df_spikes = pd.DataFrame(spike_results)
 
     # -----------------------------------------------------------------------
-    # 9. Forecastability (TRAIN steps only, 0..167)
+    # 9. Forecastability (TRAIN steps only)
     # -----------------------------------------------------------------------
     fc_results = []
     share_ac1_lt_03 = {}
     for var_name, pivot_df in [("cpu", pivot_cpu), ("mem", pivot_mem)]:
-        arr_train = pivot_df.iloc[:, 0:168].values
+        arr_train = pivot_df.iloc[:, train_start:train_end].values
         ac1_list = [autocorr(arr_train[i, :], 1) for i in range(n_containers)]
         ac5_list = [autocorr(arr_train[i, :], 5) for i in range(n_containers)]
 
@@ -325,8 +344,8 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # -----------------------------------------------------------------------
     # 10. Within-container CPU-Mem correlation on train
     # -----------------------------------------------------------------------
-    arr_cpu_tr = pivot_cpu.iloc[:, 0:168].values
-    arr_mem_tr = pivot_mem.iloc[:, 0:168].values
+    arr_cpu_tr = pivot_cpu.iloc[:, train_start:train_end].values
+    arr_mem_tr = pivot_mem.iloc[:, train_start:train_end].values
     corrs = []
     for i in range(n_containers):
         r = np.corrcoef(arr_cpu_tr[i, :], arr_mem_tr[i, :])[0, 1]
@@ -348,7 +367,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     # 11. Near-duplicates across containers (train CPU series)
     # -----------------------------------------------------------------------
     inst_to_msname = df.groupby("container_id")["msname"].first().to_dict()
-    corr_matrix = np.corrcoef(arr_cpu_tr)  # [600, 600]
+    corr_matrix = np.corrcoef(arr_cpu_tr)  # [n_containers, n_containers]
     np.fill_diagonal(corr_matrix, 0.0)
 
     # Count pairs with corr > 0.95 (upper triangle only)
@@ -379,16 +398,16 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
     axes[0].hist(std_cpu_tr, bins=35, color="tab:blue", edgecolor="black", alpha=0.8)
     axes[0].axvline(0.005, color="red", linestyle="--", label="Filter Threshold (0.005)")
-    axes[0].set_title("Distribution of Train CPU Std (600 Containers)")
-    axes[0].set_xlabel("Std(CPU) over steps 0..167")
+    axes[0].set_title(f"Distribution of Train CPU Std ({n_containers} Containers)")
+    axes[0].set_xlabel(f"Std(CPU) over steps {train_start}..{train_end-1}")
     axes[0].set_ylabel("Number of Containers")
     axes[0].grid(True, linestyle=":", alpha=0.5)
     axes[0].legend()
 
     axes[1].hist(std_mem_tr, bins=35, color="tab:orange", edgecolor="black", alpha=0.8)
     axes[1].axvline(0.001, color="red", linestyle="--", label="Filter Threshold (0.001)")
-    axes[1].set_title("Distribution of Train Mem Std (600 Containers)")
-    axes[1].set_xlabel("Std(Mem) over steps 0..167")
+    axes[1].set_title(f"Distribution of Train Mem Std ({n_containers} Containers)")
+    axes[1].set_xlabel(f"Std(Mem) over steps {train_start}..{train_end-1}")
     axes[1].set_ylabel("Number of Containers")
     axes[1].grid(True, linestyle=":", alpha=0.5)
     axes[1].legend()
@@ -400,7 +419,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
 
     # b. 4x3 grid of 12 random containers
     rng = np.random.RandomState(seed)
-    chosen_12 = rng.choice(container_names, size=12, replace=False)
+    chosen_12 = rng.choice(container_names, size=min(12, n_containers), replace=False)
 
     fig, axes = plt.subplots(4, 3, figsize=(16, 11), sharex=True)
     fig.suptitle(f"Sample Traces for 12 Random Containers (Seed {seed})", fontsize=14)
@@ -416,8 +435,8 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
 
         ax.plot(steps, c_cpu, color="tab:blue", lw=1.2, label="CPU" if idx == 0 else "")
         ax.plot(steps, c_mem, color="tab:orange", lw=1.2, label="Mem" if idx == 0 else "")
-        ax.axvline(168, color="black", linestyle="--", alpha=0.6, label="Val" if idx == 0 else "")
-        ax.axvline(204, color="crimson", linestyle="--", alpha=0.6, label="Test" if idx == 0 else "")
+        ax.axvline(train_end, color="black", linestyle="--", alpha=0.6, label="Val" if idx == 0 else "")
+        ax.axvline(val_end, color="crimson", linestyle="--", alpha=0.6, label="Test" if idx == 0 else "")
 
         ax.set_title(f"{c_id} ({svc})", fontsize=9)
         ax.set_ylim(-0.02, 1.02)
@@ -425,7 +444,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
         if c == 0:
             ax.set_ylabel("Util [0, 1]", fontsize=8)
         if r == 3:
-            ax.set_xlabel("Step (0..239)", fontsize=8)
+            ax.set_xlabel(f"Step (0..{total_steps-1})", fontsize=8)
 
     fig.legend(loc="upper right", bbox_to_anchor=(0.98, 0.98))
     plt.tight_layout()
@@ -439,8 +458,11 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     report_lines = []
     report_lines.append("# Audit Report: Alibaba microservices-v2022 Processed Dataset\n")
     report_lines.append(f"**Dataset Path:** `{parquet_path}`  ")
-    report_lines.append(f"**Dimensions:** 600 containers x 240 steps = 144,000 observations (60s sampling interval)  ")
-    report_lines.append(f"**Split Definitions:** Train (steps 0–167, 70%), Val (steps 168–203, 15%), Test (steps 204–239, 15%)\n")
+    report_lines.append(f"**Dimensions:** {n_containers} containers x {total_steps} steps = {len(df):,} observations (60s sampling interval)  ")
+    pct_tr = int(round((train_end - train_start) / total_steps * 100))
+    pct_va = int(round((val_end - val_start) / total_steps * 100))
+    pct_te = int(round((test_end - test_start) / total_steps * 100))
+    report_lines.append(f"**Split Definitions:** Train (steps {train_start}–{train_end-1}, {pct_tr}%), Val (steps {val_start}–{val_end-1}, {pct_va}%), Test (steps {test_start}–{test_end-1}, {pct_te}%)\n")
 
     report_lines.append("## 1. Distribution by Split\n")
     report_lines.append(df_to_md(df_dist))
@@ -455,7 +477,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     report_lines.append(f"- **Typical Step-to-Step Std of Average Mem:** `{std_diff_mem:.6f}`")
     report_lines.append(f"- **Synchronized Regime Events (> 3*std step-change in global mean):**")
     if len(events_cpu) == 0 and len(events_mem) == 0:
-        report_lines.append("  - None detected across all 240 timesteps.")
+        report_lines.append(f"  - None detected across all {total_steps} timesteps.")
     else:
         if len(events_cpu) > 0:
             report_lines.append(f"  - CPU jump steps: {[int(x) for x in events_cpu]}")
@@ -490,7 +512,7 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
     report_lines.append(df_to_md(df_spikes))
     report_lines.append("\n")
 
-    report_lines.append("## 9. Forecastability (Train Steps 0–167 Only)\n")
+    report_lines.append(f"## 9. Forecastability (Train Steps {train_start}–{train_end-1} Only)\n")
     report_lines.append(df_to_md(df_forecastability))
     report_lines.append("\n")
 
@@ -539,9 +561,15 @@ def run_audit(parquet_path: Path, out_dir: Path, seed: int = 42) -> str:
 
 
 def main():
-    parquet_path = Path("data/processed/alibaba_v2022.parquet")
-    out_dir = Path("results/eda")
-    report = run_audit(parquet_path, out_dir, seed=42)
+    parser = argparse.ArgumentParser(description="Read-only exploratory audit of processed container dataset.")
+    parser.add_argument("--data", type=str, default="data/processed/alibaba_v2022.parquet", help="Path to processed parquet file")
+    parser.add_argument("--out-dir", type=str, default="results/eda", help="Output directory for reports and plots")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for sample container selection")
+    args = parser.parse_args()
+
+    parquet_path = Path(args.data)
+    out_dir = Path(args.out_dir)
+    report = run_audit(parquet_path, out_dir, seed=args.seed)
     print(report)
 
 

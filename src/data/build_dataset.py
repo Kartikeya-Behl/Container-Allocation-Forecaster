@@ -22,8 +22,19 @@ Usage:
 import argparse
 import json
 from pathlib import Path
+import sys
 import numpy as np
 import pandas as pd
+
+# Support both module and script imports
+try:
+    from data.loader import split_bounds
+except ImportError:
+    try:
+        from src.data.loader import split_bounds
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from data.loader import split_bounds
 
 
 def discover_csv_files(raw_dir: Path, start_hour: int, hours: int) -> list[Path]:
@@ -58,7 +69,7 @@ def run_pipeline(
     max_per_service: int = 3,
     n_final: int = 600,
     chunk_size: int = 200_000,
-    n_steps: int = 240,
+    n_steps: int | None = None,
     first_hour_steps: int = 60,
     step_interval_ms: int = 60_000,
     cpu_std_min: float = 0.005,
@@ -66,13 +77,16 @@ def run_pipeline(
 ) -> tuple[pd.DataFrame, dict]:
     """Execute the end-to-end dataset building pipeline."""
     rng = np.random.RandomState(seed)
-    train_steps = int(n_steps * 0.70)  # 168 steps for 240
+    if n_steps is None:
+        n_steps = hours * 60
+    (train_bounds, val_bounds, test_bounds) = split_bounds(n_steps)
+    train_steps = train_bounds[1]
 
     if not csv_paths:
         raise FileNotFoundError("No raw CSV files provided or found.")
 
     print("=" * 70, flush=True)
-    print(f"BUILDING DATASET ({len(csv_paths)} CSV files, seed={seed})", flush=True)
+    print(f"BUILDING DATASET ({len(csv_paths)} CSV files, seed={seed}, n_steps={n_steps}, train_steps={train_steps})", flush=True)
     print("=" * 70, flush=True)
 
     # -----------------------------------------------------------------------
@@ -263,6 +277,11 @@ def run_pipeline(
             "n_final": n_final,
             "n_steps": n_steps,
             "train_steps": train_steps,
+            "split_bounds": {
+                "train": list(train_bounds),
+                "val": list(val_bounds),
+                "test": list(test_bounds),
+            },
             "first_hour_steps": first_hour_steps,
             "step_interval_ms": step_interval_ms,
             "cpu_std_min": cpu_std_min,
@@ -349,15 +368,25 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--max-per-service", type=int, default=3, help="Max instances per service")
     parser.add_argument("--n-final", type=int, default=600, help="Target number of final instances")
-    parser.add_argument("--out", type=str, default="data/processed/alibaba_v2022.parquet", help="Output parquet path")
+    parser.add_argument("--dataset-tag", type=str, default=None, help="Dataset tag used in output naming")
+    parser.add_argument("--out", type=str, default=None, help="Output parquet path")
     args = parser.parse_args()
 
     raw_dir = Path(args.raw_dir)
-    out_parquet = Path(args.out)
-    manifest_path = out_parquet.parent / (out_parquet.stem + "_manifest.json")
+    if args.out is not None:
+        out_parquet = Path(args.out)
+    elif args.dataset_tag is not None:
+        out_parquet = Path(f"data/processed/{args.dataset_tag}.parquet")
+    else:
+        tag = f"alibaba_v2022_{args.hours}h" if args.hours != 4 else "alibaba_v2022"
+        out_parquet = Path(f"data/processed/{tag}.parquet")
+
+    manifest_path = out_parquet.parent / f"{out_parquet.stem}_manifest.json"
 
     csv_paths = discover_csv_files(raw_dir, args.start_hour, args.hours)
     print(f"Discovered {len(csv_paths)} CSV files for hour {args.start_hour}..{args.start_hour+args.hours}: {[p.name for p in csv_paths]}", flush=True)
+
+    n_steps = args.hours * 60
 
     run_pipeline(
         csv_paths=csv_paths,
@@ -368,6 +397,7 @@ def main():
         seed=args.seed,
         max_per_service=args.max_per_service,
         n_final=args.n_final,
+        n_steps=n_steps,
     )
 
 
