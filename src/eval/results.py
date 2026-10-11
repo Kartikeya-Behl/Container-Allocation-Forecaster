@@ -38,7 +38,7 @@ _TUNING_DIR = _RESULTS_ROOT / "tuning"
 # Expected columns for metrics_long.csv (AGENTS.md §12)
 _METRICS_COLS = [
     "run_id", "dataset", "model", "horizon_steps", "target",
-    "container_id", "split", "mae", "rmse", "smape",
+    "container_id", "split", "mae", "rmse", "smape", "mase",
     "train_time_s", "pred_latency_ms", "model_size_kb", "seed",
 ]
 

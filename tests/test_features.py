@@ -17,8 +17,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from data.container_meta import compute_container_meta
 from data.loader import split_bounds
-from eval.metrics import mae, rmse, smape, container_metrics
+from eval.metrics import mae, rmse, smape, mase, container_metrics
 from eval.results import append_metrics, new_run_id, save_predictions
 from features.windows import make_supervised
 
@@ -206,8 +207,28 @@ class TestMetrics:
         # smape = 0.002 / 0.001 = 2.0
         assert abs(smape(yt, yp, floor=1e-3) - 2.0) < 1e-12
 
+    def test_mase_exact(self):
+        """Hand-computed MASE with standard inputs."""
+        yt = np.array([1.0, 2.0, 3.0])
+        yp = np.array([1.0, 1.0, 1.0])
+        # mae = (0 + 1 + 2) / 3 = 1.0
+        # naive_mae1 = 0.5 -> mase = 1.0 / 0.5 = 2.0
+        assert abs(mase(yt, yp, naive_mae1=0.5) - 2.0) < 1e-12
+
+    def test_mase_from_mae_scalar(self):
+        """Hand-computed MASE with precomputed scalar MAE."""
+        # mae = 0.05, naive_mae1 = 0.02 -> mase = 2.5
+        assert abs(mase(0.05, 0.02) - 2.5) < 1e-12
+
+    def test_mase_near_zero_floor(self):
+        """When naive_mae1 is 0 or below floor, floor prevents division by zero."""
+        # mae = 0.1, naive_mae1 = 0.0, floor = 1e-3 -> 0.1 / 1e-3 = 100.0
+        assert abs(mase(0.1, 0.0, floor=1e-3) - 100.0) < 1e-12
+        # naive_mae1 = 1e-5 < floor=1e-3 -> floor takes effect
+        assert abs(mase(0.1, 1e-5, floor=1e-3) - 100.0) < 1e-12
+
     def test_container_metrics_structure(self):
-        """container_metrics returns correct schema keys."""
+        """container_metrics returns correct schema keys including mase."""
         n = 10
         yt = np.random.rand(n)
         yp = np.random.rand(n)
@@ -218,13 +239,66 @@ class TestMetrics:
             "target_step": list(range(1, n + 1)),
             "split": ["train"] * n,
         })
-        rows = container_metrics(yt, yp, meta, "run0", "alibaba8h", "rf", 1, "cpu",
-                                 1.5, 0.5, 100.0, 42)
+        rows = container_metrics(
+            yt, yp, meta, "run0", "alibaba8h", "rf", 1, "cpu",
+            1.5, 0.5, 100.0, 42, naive_mae1_map={"c000": 0.05}
+        )
         assert len(rows) == 1
         required = {"run_id", "dataset", "model", "horizon_steps", "target",
-                    "container_id", "split", "mae", "rmse", "smape",
+                    "container_id", "split", "mae", "rmse", "smape", "mase",
                     "train_time_s", "pred_latency_ms", "model_size_kb", "seed"}
         assert required.issubset(set(rows[0].keys()))
+        # Check mase value matches expected mae / max(0.05, 1e-3)
+        expected_mase = rows[0]["mae"] / 0.05
+        assert abs(rows[0]["mase"] - expected_mase) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# container_meta tests (train-only leakage tests)
+# ---------------------------------------------------------------------------
+
+class TestContainerMeta:
+    @pytest.mark.parametrize("n_steps", [240, 480])
+    def test_container_meta_unaltered_by_val_test(self, n_steps):
+        """Altering val and test steps does not change container_meta at all."""
+        # Create tiny synthetic long DataFrame for 3 containers
+        n_containers = 3
+        bounds = split_bounds(n_steps)
+        (tr_s, tr_e), _, _ = bounds
+
+        rng = np.random.RandomState(42)
+        records = []
+        for i in range(n_containers):
+            cid = f"c{i:03d}"
+            ms = f"MS_{i}"
+            for s in range(n_steps):
+                records.append({
+                    "container_id": cid,
+                    "msname": ms,
+                    "step": s,
+                    "cpu": float(rng.uniform(0.1, 0.8)),
+                    "mem": float(rng.uniform(0.2, 0.7)),
+                })
+        df = pd.DataFrame(records)
+
+        # Baseline container meta
+        meta_base, manifest_base = compute_container_meta(df)
+
+        # Corrupt all steps strictly outside train split (val and test)
+        df_corrupted = df.copy()
+        mask_future = df_corrupted["step"] >= tr_e
+        df_corrupted.loc[mask_future, "cpu"] = 999.0
+        df_corrupted.loc[mask_future, "mem"] = 999.0
+
+        meta_corrupt, manifest_corrupt = compute_container_meta(df_corrupted)
+
+        pd.testing.assert_frame_equal(
+            meta_base,
+            meta_corrupt,
+            check_exact=True,
+            obj="container_meta changed when val/test values were altered (leakage!)",
+        )
+        assert manifest_base == manifest_corrupt
 
 
 # ---------------------------------------------------------------------------

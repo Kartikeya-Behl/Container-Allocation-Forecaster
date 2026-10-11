@@ -1,0 +1,43 @@
+{
+  "n_containers": 600,
+  "n_steps_total": 480,
+  "train_steps": 336,
+  "split_bounds": {
+    "train": [
+      0,
+      336
+    ],
+    "val": [
+      336,
+      408
+    ],
+    "test": [
+      408,
+      480
+    ]
+  },
+  "cutoffs": {
+    "mem_flat_threshold": 0.01,
+    "cpu_terciles": [
+      0.014487499096475707,
+      0.03330614746157855
+    ],
+    "restart_drop_threshold": 0.2
+  },
+  "tier_counts": {
+    "mem_tier": {
+      "flat": 495,
+      "volatile": 105
+    },
+    "cpu_tier": {
+      "low": 200,
+      "high": 200,
+      "mid": 200
+    },
+    "has_restart_train": {
+      "true": 86,
+      "false": 514
+    }
+  },
+  "rule": "Headline results are always on all 600 containers; tiers are for stratified reporting only and MUST NEVER be used to exclude containers or select subsets."
+}
