@@ -24,7 +24,9 @@ import yaml
 # Make src/ importable when running pytest from repo root
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import pandas as pd
 from common import get_logger, load_config, save_run, set_seed
+from data.split import chrono_split
 
 # Path to the default config, relative to repo root
 CONFIG_PATH = Path(__file__).parent.parent / "configs" / "default.yaml"
@@ -192,42 +194,59 @@ class TestSaveRun:
 # ---------------------------------------------------------------------------
 
 class TestChronologicalSplit:
-    """Verify that our split logic preserves temporal order."""
+    """Verify that chrono_split preserves temporal order per group without shuffling."""
 
-    def _make_split(self, n: int, train_frac: float, val_frac: float):
-        """Return (train_idx, val_idx, test_idx) for a series of length n."""
-        train_end = int(n * train_frac)
-        val_end   = train_end + int(n * val_frac)
-        train_idx = list(range(0, train_end))
-        val_idx   = list(range(train_end, val_end))
-        test_idx  = list(range(val_end, n))
-        return train_idx, val_idx, test_idx
+    @pytest.fixture
+    def multi_group_df(self):
+        """Create sample DataFrame with 2 groups and 100 timestamps each."""
+        rows = []
+        for grp in ["container_A", "container_B"]:
+            for t in range(100):
+                rows.append({"container_id": grp, "timestamp": t, "val": t * 10})
+        return pd.DataFrame(rows)
 
-    def test_no_overlap_between_splits(self):
-        train, val, test = self._make_split(100, 0.70, 0.15)
-        assert set(train) & set(val) == set()
-        assert set(train) & set(test) == set()
-        assert set(val) & set(test) == set()
+    def test_no_overlap_between_splits(self, multi_group_df):
+        train, val, test = chrono_split(multi_group_df, group_col="container_id", time_col="timestamp")
+        assert len(set(train.index) & set(val.index)) == 0
+        assert len(set(train.index) & set(test.index)) == 0
+        assert len(set(val.index) & set(test.index)) == 0
 
-    def test_train_comes_first(self):
-        train, val, test = self._make_split(100, 0.70, 0.15)
-        assert max(train) < min(val), "Train indices must all precede val indices"
-        assert max(val) < min(test), "Val indices must all precede test indices"
+    def test_train_comes_first_in_time_per_group(self, multi_group_df):
+        train, val, test = chrono_split(multi_group_df, group_col="container_id", time_col="timestamp")
+        for grp in ["container_A", "container_B"]:
+            t_train = train[train["container_id"] == grp]["timestamp"]
+            t_val = val[val["container_id"] == grp]["timestamp"]
+            t_test = test[test["container_id"] == grp]["timestamp"]
+            assert t_train.max() < t_val.min(), f"Train max time {t_train.max()} >= Val min time {t_val.min()} for {grp}"
+            assert t_val.max() < t_test.min(), f"Val max time {t_val.max()} >= Test min time {t_test.min()} for {grp}"
 
-    def test_splits_cover_all_indices(self):
-        n = 100
-        train, val, test = self._make_split(n, 0.70, 0.15)
-        all_idx = sorted(train + val + test)
-        assert all_idx == list(range(n)), "Splits do not cover all indices"
+    def test_splits_cover_all_rows(self, multi_group_df):
+        train, val, test = chrono_split(multi_group_df, group_col="container_id", time_col="timestamp")
+        total_len = len(train) + len(val) + len(test)
+        assert total_len == len(multi_group_df)
 
-    def test_approximate_proportions(self):
-        n = 1000
-        train, val, test = self._make_split(n, 0.70, 0.15)
-        assert abs(len(train) / n - 0.70) < 0.02
-        assert abs(len(val)   / n - 0.15) < 0.02
-        assert abs(len(test)  / n - 0.15) < 0.02
+    def test_approximate_proportions_per_group(self, multi_group_df):
+        train, val, test = chrono_split(multi_group_df, group_col="container_id", time_col="timestamp")
+        for grp in ["container_A", "container_B"]:
+            n_grp = 100
+            assert len(train[train["container_id"] == grp]) == int(n_grp * 0.70)
+            assert len(val[val["container_id"] == grp]) == int(n_grp * 0.15)
+            assert len(test[test["container_id"] == grp]) == n_grp - int(n_grp * 0.70) - int(n_grp * 0.15)
+
+    def test_single_series_split_without_group(self):
+        df = pd.DataFrame({"timestamp": range(100), "val": range(100)})
+        train, val, test = chrono_split(df, group_col=None, time_col="timestamp")
+        assert len(train) == 70
+        assert len(val) == 15
+        assert len(test) == 15
+        assert train["timestamp"].max() < val["timestamp"].min() < test["timestamp"].min()
+
+    def test_invalid_fracs_raises(self, multi_group_df):
+        with pytest.raises(ValueError):
+            chrono_split(multi_group_df, group_col="container_id", time_col="timestamp", fracs=(0.5, 0.2, 0.1))
 
     def test_logger_returns_logger(self):
         logger = get_logger("test_logger")
         import logging
         assert isinstance(logger, logging.Logger)
+

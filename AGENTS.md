@@ -68,3 +68,14 @@
 - **Follow `docs/HANDOVER.md` at all times.** It is the primary specification.
 - If you want to deviate from the spec, **stop and ask the project owner** before making any changes.
 - If something in the spec is unclear or contradictory, **flag it explicitly** and wait for clarification.
+
+## 11. Credit Economy
+
+- **Credit economy**: batch steps, minimal prose, no unrequested refactors or docs.
+
+## 12. Results Schema
+
+- Every model evaluation appends rows to `results/metrics_long.csv` with columns:
+  `run_id, dataset, model, horizon_steps, target(cpu|mem), container_id, split, mae, rmse, smape, train_time_s, pred_latency_ms, model_size_kb, seed`.
+- Test-split predictions are saved to `results/predictions/<dataset>_<model>_h<H>_<target>.parquet` with columns `container_id, timestamp, y_true, y_pred`.
+- Never overwrite old runs; append.
