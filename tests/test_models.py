@@ -283,7 +283,7 @@ def test_runner_writes_and_appends(tmp_path, monkeypatch):
     _METRICS_COLS = [
         "run_id", "dataset", "model", "horizon_steps", "target",
         "container_id", "split", "mae", "rmse", "smape", "mase",
-        "train_time_s", "pred_latency_ms", "model_size_kb", "fallback_rate", "seed",
+        "train_time_s", "pred_latency_ms", "model_size_kb", "n_models", "n_jobs", "fallback_rate", "seed",
     ]
 
     row1 = {c: "r1" if c in ("run_id", "dataset", "model", "target", "container_id", "split") else 1.0
@@ -303,6 +303,25 @@ def test_runner_writes_and_appends(tmp_path, monkeypatch):
     assert set(_METRICS_COLS).issubset(set(df.columns)), "Missing columns in metrics_long.csv"
     assert len(df) == 2, f"Expected 2 rows after two appends, got {len(df)}"
     assert set(df["run_id"]) == {"r1", "r2"}, "Both run_ids must be present"
+
+
+def test_model_sizes(naive_fitted, ma_fitted, ets_fitted, arima_fitted):
+    """Test minimal payload sizes: naive size 0; ARIMA per-container < 5 KB; ETS < 5 KB."""
+    # Naive must be 0
+    assert naive_fitted.size_kb() == 0.0
+
+    # MA must be small (pickled integer k)
+    assert 0.0 < ma_fitted.size_kb() < 1.0
+
+    # ETS per-container < 5 KB
+    for i in range(N_CONTAINERS):
+        sz = ets_fitted.size_kb(container_idx=i)
+        assert 0.0 < sz < 5.0, f"ETS container {i} size {sz} KB not in (0, 5) KB"
+
+    # ARIMA per-container < 5 KB
+    for i in range(N_CONTAINERS):
+        sz = arima_fitted.size_kb(container_idx=i)
+        assert 0.0 < sz < 5.0, f"ARIMA container {i} size {sz} KB not in (0, 5) KB"
 
 
 def test_ets_arima_no_fallbacks_and_differ_from_naive(

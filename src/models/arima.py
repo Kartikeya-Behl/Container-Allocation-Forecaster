@@ -196,6 +196,28 @@ class ARIMAForecaster(Forecaster):
             dest_dir / f"arima_{target}_choices.csv", index=False
         )
 
+    def size_kb(self, container_idx: int = 0) -> float:
+        """Return serialised size of minimal payload for one container model instance.
+
+        Payload: order tuple (p, d, q), trend flag, and the params array.
+        """
+        import io
+        import pickle
+        if not self._fitted or container_idx >= len(self._fitted) or self._fitted[container_idx] is None:
+            return 0.0
+        res = self._fitted[container_idx]
+        p, d, q = self._chosen_order[container_idx]
+        trend = _trend_for_d(d)
+        params = res.params
+        payload = {
+            "order": (p, d, q),
+            "trend": trend,
+            "params": params,
+        }
+        buf = io.BytesIO()
+        pickle.dump(payload, buf)
+        return buf.tell() / 1024.0
+
     def predict_origins(
         self,
         Y: np.ndarray,

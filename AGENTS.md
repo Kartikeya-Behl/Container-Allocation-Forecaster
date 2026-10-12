@@ -80,7 +80,17 @@
 ## 12. Results Schema
 
 - Every model evaluation appends rows to `results/metrics_long.csv` with columns:
-  `run_id, dataset, model, horizon_steps, target(cpu|mem), container_id, split, mae, rmse, smape, mase, train_time_s, pred_latency_ms, model_size_kb, fallback_rate, seed`.
+  `run_id, dataset, model, horizon_steps, target(cpu|mem), container_id, split, mae, rmse, smape, mase, train_time_s, pred_latency_ms, model_size_kb, n_models, n_jobs, fallback_rate, seed`.
+- **Model Size (`model_size_kb`)**: Size of the pickled MINIMAL parameter payload needed to produce forecasts for ONE model instance (for per-container models, that container's own model; for global models, the single model), excluding training data and fit diagnostics:
+  - `naive`: 0 KB.
+  - `ma`: size of pickled integer `k`.
+  - `ets`: size of pickled config tuple + fitted smoothing parameters and Box-Cox lambda.
+  - `arima`: size of pickled order tuple `(p, d, q)`, trend flag string, and the estimated parameters array.
+  - `rf`: the full fitted estimator pickled.
+  - `xgb`: raw serialized bytes via `xgboost.Booster.save_raw`.
+  - `lstm`: PyTorch `state_dict` serialized.
+- `n_models`: Number of fitted model instances needed to cover all containers for that (model, target, horizon): 600 for per-container models, 1 for global models.
+- `n_jobs`: Number of parallel workers used in fitting (e.g. 1 for sequential, or cpu count / specified n_jobs).
 - Predictions for **both val and test** splits are saved to `results/predictions/<run_tag>/<dataset>_<model>_h<H>_<target>.parquet` with columns `container_id, origin_step, target_step, split, y_true, y_pred`. Val predictions are needed to tune the safety margin; test predictions are for final reporting.
 - Never overwrite old runs; append. If a predictions file already exists, append with a new run_id so both sets are preserved.
 - Tuning logs go to `results/tuning/`; best hyperparameters are saved to `results/tuning/best_params.json`; all tuning records are append-only with a run_id.

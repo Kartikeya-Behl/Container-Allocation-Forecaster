@@ -180,6 +180,14 @@ class MAForecaster(Forecaster):
         )
         return best_k
 
+    def size_kb(self, container_idx: int = 0) -> float:
+        """Return serialised size of pickled k in kilobytes."""
+        import io
+        import pickle
+        buf = io.BytesIO()
+        pickle.dump(self.k_, buf)
+        return buf.tell() / 1024.0
+
     def predict_origins(
         self,
         Y: np.ndarray,

@@ -155,6 +155,8 @@ def container_metrics(
     seed: int,
     naive_mae1_map: Mapping[str, float] | pd.DataFrame | None = None,
     fallback_rate: float = 0.0,
+    n_models: int = 1,
+    n_jobs: int = 1,
 ) -> list[dict]:
     """Compute per-container per-split metrics and format as AGENTS.md schema rows.
 
@@ -182,7 +184,7 @@ def container_metrics(
     pred_latency_ms : float
         Median prediction latency per single origin in milliseconds.
     model_size_kb : float
-        Serialised model size in kilobytes.
+        Serialised model size of ONE model instance in kilobytes.
     seed : int
         Random seed used.
     naive_mae1_map : mapping or pd.DataFrame, optional
@@ -191,6 +193,10 @@ def container_metrics(
         data/processed/container_meta_8h.parquet if present.
     fallback_rate : float, default 0.0
         Fallback rate over all forecasts for this model and target.
+    n_models : int, default 1
+        Number of fitted model instances needed to cover all containers.
+    n_jobs : int, default 1
+        Number of parallel workers used in fitting.
 
     Returns
     -------
@@ -245,6 +251,8 @@ def container_metrics(
             "train_time_s": train_time_s,
             "pred_latency_ms": pred_latency_ms,
             "model_size_kb": model_size_kb,
+            "n_models": n_models,
+            "n_jobs": n_jobs,
             "fallback_rate": fallback_rate,
             "seed": seed,
         })

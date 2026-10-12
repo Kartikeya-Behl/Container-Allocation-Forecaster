@@ -39,7 +39,7 @@ _TUNING_DIR = _RESULTS_ROOT / "tuning"
 _METRICS_COLS = [
     "run_id", "dataset", "model", "horizon_steps", "target",
     "container_id", "split", "mae", "rmse", "smape", "mase",
-    "train_time_s", "pred_latency_ms", "model_size_kb", "fallback_rate", "seed",
+    "train_time_s", "pred_latency_ms", "model_size_kb", "n_models", "n_jobs", "fallback_rate", "seed",
 ]
 
 # Expected columns for predictions parquet (AGENTS.md §12)

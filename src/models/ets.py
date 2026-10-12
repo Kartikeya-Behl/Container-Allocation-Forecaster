@@ -185,6 +185,34 @@ class ETSForecaster(Forecaster):
             dest_dir / f"ets_{target}_choices.csv", index=False
         )
 
+    def size_kb(self, container_idx: int = 0) -> float:
+        """Return serialised size of minimal payload for one container model instance.
+
+        Payload: config tuple + fitted smoothing parameters and Box-Cox lambda.
+        """
+        import io
+        import pickle
+        if not self._fitted or container_idx >= len(self._fitted) or self._fitted[container_idx] is None:
+            return 0.0
+        res = self._fitted[container_idx]
+        cfg_idx = self._chosen_cfg[container_idx]
+        cfg_tuple = _CONFIGS[cfg_idx]
+        kw = {
+            k: v
+            for k, v in res.params.items()
+            if k in ["smoothing_level", "smoothing_trend", "damping_trend"]
+            and not np.isnan(v)
+        }
+        lam = res.params.get("lamda", None) if cfg_tuple[2] else None
+        payload = {
+            "config": cfg_tuple,
+            "params": kw,
+            "lamda": lam,
+        }
+        buf = io.BytesIO()
+        pickle.dump(payload, buf)
+        return buf.tell() / 1024.0
+
     def predict_origins(
         self,
         Y: np.ndarray,

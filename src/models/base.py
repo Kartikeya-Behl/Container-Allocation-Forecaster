@@ -85,11 +85,27 @@ class Forecaster(ABC):
             horizon h.
         """
 
-    def size_kb(self) -> float:
-        """Return serialised size of fitted parameters in kilobytes.
+    def size_kb(self, container_idx: int = 0) -> float:
+        """Return serialised size of the minimal parameter payload in kilobytes.
 
-        Uses pickle to serialise the instance.  Subclasses may override
-        with a lighter measurement if pickle is too slow.
+        Definition
+        ----------
+        Size of the pickled MINIMAL parameter payload needed to produce forecasts
+        for ONE model instance (for per-container models, that container's own model;
+        for global models, the single model), excluding training data and fit diagnostics:
+        - naive: 0 KB.
+        - ma: size of pickled integer k.
+        - ets: size of pickled config tuple + fitted smoothing parameters and Box-Cox lambda.
+        - arima: size of pickled order (p,d,q), trend flag, and the params array.
+        - rf: the full fitted estimator pickled.
+        - xgb: raw serialized bytes via xgboost save_raw.
+        - lstm: serialized state_dict.
+
+        Parameters
+        ----------
+        container_idx : int, default 0
+            For per-container models, index of the container instance whose
+            minimal parameters to measure.
 
         Returns
         -------

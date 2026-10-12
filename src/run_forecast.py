@@ -199,6 +199,9 @@ def _compute_metrics(
     seed: int,
     naive_mae1_map: dict[str, float],
     fallback_rate: float = 0.0,
+    n_models: int = 1,
+    n_jobs: int = 1,
+    model_size_map: dict[str, float] | None = None,
 ) -> list[dict]:
     """Compute per-container per-horizon per-split metrics from pred_rows.
 
@@ -211,6 +214,10 @@ def _compute_metrics(
     seed : int
     naive_mae1_map : dict[str, float]
     fallback_rate : float, default 0.0
+    n_models : int, default 1
+    n_jobs : int, default 1
+    model_size_map : dict[str, float], optional
+        Mapping of container_id -> size_kb for that container's model.
 
     Returns
     -------
@@ -229,6 +236,7 @@ def _compute_metrics(
         smape_val = smape(yt, yp)
         naive_d = naive_mae1_map.get(str(c_id), 0.0)
         mase_val = mase(mae_val, naive_d)
+        inst_size_kb = model_size_map.get(str(c_id), model_size_kb) if model_size_map else model_size_kb
         metric_rows.append({
             "run_id": run_id,
             "dataset": dataset,
@@ -243,7 +251,9 @@ def _compute_metrics(
             "mase": mase_val,
             "train_time_s": train_time_s,
             "pred_latency_ms": pred_latency_ms,
-            "model_size_kb": model_size_kb,
+            "model_size_kb": inst_size_kb,
+            "n_models": n_models,
+            "n_jobs": n_jobs,
             "fallback_rate": fallback_rate,
             "seed": seed,
         })
@@ -379,7 +389,22 @@ def run(
             pred_latency_ms = float(np.median(lat_times))
             logger.info("Median latency: %.3f ms", pred_latency_ms)
 
-            model_size_kb = model.size_kb()
+            # Measure size of ONE model instance (and per-container map if applicable)
+            is_per_container = model_name in ("ets", "arima")
+            n_models = 600 if is_per_container else 1
+            n_jobs = getattr(model, "n_jobs", 1)
+            if n_jobs == -1:
+                n_jobs = os.cpu_count() or 1
+
+            model_size_map: dict[str, float] = {}
+            if is_per_container:
+                for idx, c_id in enumerate(ids):
+                    model_size_map[str(c_id)] = model.size_kb(container_idx=idx)
+                model_size_kb = float(np.mean(list(model_size_map.values()))) if model_size_map else 0.0
+            else:
+                model_size_kb = model.size_kb()
+                for c_id in ids:
+                    model_size_map[str(c_id)] = model_size_kb
 
             # ---- build prediction rows and save ------------------------------
             # Map origin index in all_origins -> index in preds_all
@@ -433,6 +458,9 @@ def run(
                 seed=seed,
                 naive_mae1_map=naive_mae1_map,
                 fallback_rate=fallback_rate,
+                n_models=n_models,
+                n_jobs=n_jobs,
+                model_size_map=model_size_map,
             )
 
             if metric_rows:
@@ -450,6 +478,8 @@ def run(
                     "fit_time_s": fit_time_s,
                     "pred_latency_ms": pred_latency_ms,
                     "model_size_kb": model_size_kb,
+                    "n_models": n_models,
+                    "n_jobs": n_jobs,
                     "fallback_count": fallback_cnt,
                     "fallback_rate": fallback_rate,
                     "machine": minfo,

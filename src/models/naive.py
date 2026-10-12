@@ -44,6 +44,10 @@ class NaiveForecaster(Forecaster):
         self._n_containers = Y_train.shape[0]
         self._ids = list(ids)
 
+    def size_kb(self, container_idx: int = 0) -> float:
+        """Return serialised size of minimal parameters (0 KB for naive)."""
+        return 0.0
+
     def predict_origins(
         self,
         Y: np.ndarray,
