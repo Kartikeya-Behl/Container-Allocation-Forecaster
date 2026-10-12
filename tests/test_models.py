@@ -95,17 +95,17 @@ def ma_fitted(Y_synth, ids_synth, split_info):
 
 @pytest.fixture(scope="module")
 def ets_fitted(Y_synth, ids_synth, split_info):
-    (tr_s, tr_e), _, _ = split_info
+    (tr_s, tr_e), (va_s, va_e), _ = split_info
     m = ETSForecaster()
-    m.fit(Y_synth[:, tr_s:tr_e], ids_synth)
+    m.fit(Y_synth[:, tr_s:tr_e], ids_synth, Y_full=Y_synth, val_start=va_s, val_end=va_e)
     return m
 
 
 @pytest.fixture(scope="module")
 def arima_fitted(Y_synth, ids_synth, split_info):
-    (tr_s, tr_e), _, _ = split_info
+    (tr_s, tr_e), (va_s, va_e), _ = split_info
     m = ARIMAForecaster(n_jobs=1)  # sequential for test isolation
-    m.fit(Y_synth[:, tr_s:tr_e], ids_synth)
+    m.fit(Y_synth[:, tr_s:tr_e], ids_synth, Y_full=Y_synth, val_start=va_s, val_end=va_e)
     return m
 
 
@@ -148,7 +148,7 @@ def test_invariance(request, model_name, fixture_name, Y_synth, split_info):
 
 
 # ---------------------------------------------------------------------------
-# 2. Selection uses train only
+# 2. Selection uses validation only (never reads test)
 # ---------------------------------------------------------------------------
 
 def test_ma_selection_uses_val(Y_synth, ids_synth, split_info):
@@ -181,38 +181,68 @@ def test_ma_selection_uses_val(Y_synth, ids_synth, split_info):
     )
 
 
-def test_ets_selection_uses_train_only(Y_synth, ids_synth, split_info):
-    """ETS AICc is computed on train; altering val/test must not change chosen configs."""
-    (tr_s, tr_e), _, _ = split_info
+def test_ets_selection_ignores_test(Y_synth, ids_synth, split_info):
+    """ETS is selected on val; altering test values must not change chosen configs."""
+    (tr_s, tr_e), (va_s, va_e), (te_s, te_e) = split_info
 
     m1 = ETSForecaster()
-    m1.fit(Y_synth[:, tr_s:tr_e], ids_synth)
+    m1.fit(Y_synth[:, tr_s:tr_e], ids_synth, Y_full=Y_synth, val_start=va_s, val_end=va_e)
 
     Y2 = Y_synth.copy()
-    Y2[:, tr_e:] = 999.0  # alter only val+test
+    Y2[:, te_s:] = 999.0  # alter only test
     m2 = ETSForecaster()
-    m2.fit(Y2[:, tr_s:tr_e], ids_synth)  # same train slice
+    m2.fit(Y2[:, tr_s:tr_e], ids_synth, Y_full=Y2, val_start=va_s, val_end=va_e)
 
     assert m1._chosen_cfg == m2._chosen_cfg, (
-        "ETS chosen configs changed when val/test values were altered"
+        "ETS chosen configs changed when test values were altered"
     )
 
 
-def test_arima_selection_uses_train_only(Y_synth, ids_synth, split_info):
-    """ARIMA AIC is computed on train; altering val/test must not change chosen orders."""
-    (tr_s, tr_e), _, _ = split_info
+def test_arima_selection_ignores_test(Y_synth, ids_synth, split_info):
+    """ARIMA is selected on val; altering test values must not change chosen orders."""
+    (tr_s, tr_e), (va_s, va_e), (te_s, te_e) = split_info
 
     m1 = ARIMAForecaster(n_jobs=1)
-    m1.fit(Y_synth[:, tr_s:tr_e], ids_synth)
+    m1.fit(Y_synth[:, tr_s:tr_e], ids_synth, Y_full=Y_synth, val_start=va_s, val_end=va_e)
 
     Y2 = Y_synth.copy()
-    Y2[:, tr_e:] = 999.0
+    Y2[:, te_s:] = 999.0  # alter only test
     m2 = ARIMAForecaster(n_jobs=1)
-    m2.fit(Y2[:, tr_s:tr_e], ids_synth)
+    m2.fit(Y2[:, tr_s:tr_e], ids_synth, Y_full=Y2, val_start=va_s, val_end=va_e)
 
     assert m1._chosen_order == m2._chosen_order, (
-        "ARIMA chosen orders changed when val/test values were altered"
+        "ARIMA chosen orders changed when test values were altered"
     )
+
+
+def test_arima_random_walk(split_info):
+    """For a random-walk series the ARIMA choice must include a d=1 order or produce forecasts within 10% MAE of naive on val."""
+    (tr_s, tr_e), (va_s, va_e), (te_s, te_e) = split_info
+    rng = np.random.default_rng(42)
+    Y_rw = np.cumsum(rng.normal(0, 0.05, size=(N_CONTAINERS, N_STEPS)), axis=1) + 2.0
+    ids = [f"rw_{i}" for i in range(N_CONTAINERS)]
+
+    m = ARIMAForecaster(n_jobs=1)
+    m.fit(Y_rw[:, tr_s:tr_e], ids, Y_full=Y_rw, val_start=va_s, val_end=va_e)
+
+    val_origins = [t for t in range(va_s - 1, va_e - 5) if t >= 0]
+    preds = m.predict_origins(Y_rw, val_origins, max_h=MAX_H)
+
+    for i in range(N_CONTAINERS):
+        p, d, q = m._chosen_order[i]
+        if d == 1:
+            continue
+        arima_errs = []
+        naive_errs = []
+        for j, t in enumerate(val_origins):
+            targets = Y_rw[i, t + 1 : t + 1 + MAX_H]
+            arima_errs.append(float(np.mean(np.abs(preds[i, j, :] - targets))))
+            naive_errs.append(float(np.mean(np.abs(Y_rw[i, t] - targets))))
+        arima_mae = float(np.mean(arima_errs))
+        naive_mae = float(np.mean(naive_errs))
+        assert arima_mae <= 1.10 * naive_mae, (
+            f"Container {i} chose order ({p},{d},{q}) without d=1 and arima_mae {arima_mae:.4f} > 1.10*naive_mae {naive_mae:.4f}"
+        )
 
 
 # ---------------------------------------------------------------------------

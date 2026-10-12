@@ -123,41 +123,91 @@ class ETSForecaster(Forecaster):
         self._ids: list[str] = []
         self.fallback_count_: int = 0
 
-    def fit(self, Y_train: np.ndarray, ids: list[str]) -> None:
-        """Select ETS config per container using AICc on train.
+    def fit(
+        self,
+        Y_train: np.ndarray,
+        ids: list[str],
+        Y_full: np.ndarray | None = None,
+        val_start: int | None = None,
+        val_end: int | None = None,
+    ) -> None:
+        """Fit all 6 ETS candidate configs on train and select by validation MAE.
 
         Parameters
         ----------
         Y_train : ndarray, shape [n_containers, n_train_steps]
         ids : list[str]
+        Y_full : ndarray, shape [n_containers, n_steps], optional
+            Full observation matrix containing validation history and targets.
+        val_start : int, optional
+            First step of validation split.
+        val_end : int, optional
+            Step index after last validation step.
         """
         self._ids = list(ids)
         self._fitted = []
         self._chosen_cfg = []
         self._best_aicc = []
+        self._best_val_score = []
         self.fallback_count_ = 0
+
+        # Determine validation origins: t in [val_start - 1, val_end - 1 - 5]
+        val_origins: list[int] = []
+        if Y_full is not None and val_start is not None and val_end is not None:
+            val_origins = [t for t in range(val_start - 1, val_end - 5) if t >= 0]
 
         for i, _ in enumerate(ids):
             y = Y_train[i]
-            best_res = None
-            best_aicc = np.inf
-            best_cfg_idx = 0
-
+            # 1. Fit all candidates on train
+            candidate_res: list[object | None] = []
+            candidate_aicc: list[float] = []
             for cfg_idx, (trend, damped, bc) in enumerate(_CONFIGS):
                 res = _fit_ets(y, trend, damped, bc)
+                candidate_res.append(res)
                 if res is not None:
                     try:
-                        aicc = float(res.aicc)
-                        if np.isfinite(aicc) and aicc < best_aicc:
-                            best_aicc = aicc
-                            best_res = res
-                            best_cfg_idx = cfg_idx
+                        candidate_aicc.append(float(res.aicc))
                     except Exception:
-                        pass
+                        candidate_aicc.append(np.inf)
+                else:
+                    candidate_aicc.append(np.inf)
+
+            # 2. Select by validation forecast error (or AICc fallback if no val given)
+            best_cfg_idx = 0
+            best_val_score = np.inf
+            best_res = None
+            best_aicc = np.inf
+
+            if val_origins and Y_full is not None:
+                for cfg_idx, res in enumerate(candidate_res):
+                    if res is None:
+                        continue
+                    errors = []
+                    for t in val_origins:
+                        y_hist = Y_full[i, : t + 1]
+                        fc = self._forecast_one(res, cfg_idx, y_hist, self.max_h)
+                        if fc is None:
+                            errors.append(np.inf)
+                            break
+                        target_vals = Y_full[i, t + 1 : t + 1 + self.max_h]
+                        errors.append(float(np.mean(np.abs(fc - target_vals))))
+                    score = float(np.mean(errors)) if errors else np.inf
+                    if score < best_val_score:
+                        best_val_score = score
+                        best_cfg_idx = cfg_idx
+                        best_res = res
+                        best_aicc = candidate_aicc[cfg_idx]
+            else:
+                for cfg_idx, res in enumerate(candidate_res):
+                    if res is not None and candidate_aicc[cfg_idx] < best_aicc:
+                        best_aicc = candidate_aicc[cfg_idx]
+                        best_cfg_idx = cfg_idx
+                        best_res = res
 
             self._fitted.append(best_res)
             self._chosen_cfg.append(best_cfg_idx)
             self._best_aicc.append(best_aicc)
+            self._best_val_score.append(best_val_score if np.isfinite(best_val_score) else None)
 
     def save_choices(self, target: str, run_tag: str | None = None) -> None:
         """Persist per-container choices to results/tuning/<run_tag>/ets_<target>_choices.csv.
@@ -173,7 +223,10 @@ class ETSForecaster(Forecaster):
             {
                 "container_id": self._ids[i],
                 "config": _CONFIG_NAMES[self._chosen_cfg[i]],
+                "val_score": self._best_val_score[i],
+                "aic": self._best_aicc[i] if np.isfinite(self._best_aicc[i]) else None,
                 "aicc": self._best_aicc[i] if np.isfinite(self._best_aicc[i]) else None,
+                "selected_by": "val_mae",
                 "fallback": self._fitted[i] is None,
                 **({"run_tag": run_tag} if run_tag else {}),
             }

@@ -24,6 +24,7 @@
 
 - The **test set is touched once**, for final reporting only.
 - **Hyperparameters** (e.g. number of lags, tree depth, number of estimators) are tuned on **validation only**.
+- **ETS/ARIMA selected by validation MAE; val predictions of selected models are therefore slightly optimistic (same as for MA/RF/XGB). Test is never used for selection.**
 - The **safety margin** for the proactive rule is tuned on **validation only**.
 - After touching the test set, do not re-tune or re-train based on test results.
 

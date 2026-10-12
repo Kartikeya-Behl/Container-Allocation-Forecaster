@@ -89,36 +89,82 @@ def _fit_order(
 
 
 def _fit_one_container(
-    i: int, y: np.ndarray
-) -> tuple[int, object | None, tuple[int, int, int]]:
-    """Select best ARIMA order for container i by AIC on train.
+    i: int,
+    y_train: np.ndarray,
+    y_full: np.ndarray | None = None,
+    val_origins: list[int] | None = None,
+    max_h: int = 5,
+) -> tuple[int, object | None, tuple[int, int, int], float | None, float | None, list[tuple[int, int, int]]]:
+    """Fit all 24 ARIMA orders on train, shortlist lowest-AIC + (0,1,0)/(0,1,1), and select by val MAE.
 
     Parameters
     ----------
     i : int
         Container row index.
-    y : ndarray, shape [n_train]
+    y_train : ndarray, shape [n_train]
+    y_full : ndarray, shape [n_steps], optional
+    val_origins : list[int], optional
+    max_h : int, default 5
 
     Returns
     -------
-    (i, best_result, best_order)
+    (i, best_result, best_order, best_val_score, best_aic, shortlist)
     """
-    best_res = None
-    best_order = (1, 0, 0)
-    best_aic = np.inf
+    results: dict[tuple[int, int, int], tuple[object | None, float]] = {}
 
     for order in _ORDERS:
-        res, aic = _fit_order(y, order)
-        if aic < best_aic:
-            best_aic = aic
-            best_res = res
-            best_order = order
+        res, aic = _fit_order(y_train, order)
+        results[order] = (res, aic)
 
-    return i, best_res, best_order
+    # 5 lowest-AIC orders
+    valid_orders = [o for o in _ORDERS if np.isfinite(results[o][1])]
+    valid_orders.sort(key=lambda o: results[o][1])
+    shortlist = valid_orders[:5]
+
+    # Add (0,1,0) and (0,1,1) with trend 'n' (dedupe)
+    for special in [(0, 1, 0), (0, 1, 1)]:
+        if special in results and results[special][0] is not None and special not in shortlist:
+            shortlist.append(special)
+
+    if not shortlist:
+        shortlist = [(1, 0, 0)]
+
+    best_order = shortlist[0]
+    best_res, best_aic = results.get(best_order, (None, np.inf))
+    best_val_score: float | None = None
+
+    if val_origins and y_full is not None:
+        min_score = np.inf
+        for order in shortlist:
+            res, aic = results[order]
+            if res is None:
+                continue
+            errors = []
+            for t in val_origins:
+                y_hist = y_full[: t + 1]
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        applied = res.apply(y_hist, refit=False)
+                        fc = applied.forecast(max_h)
+                    target_vals = y_full[t + 1 : t + 1 + max_h]
+                    errors.append(float(np.mean(np.abs(fc - target_vals))))
+                except Exception:
+                    errors.append(np.inf)
+                    break
+            score = float(np.mean(errors)) if errors else np.inf
+            if score < min_score:
+                min_score = score
+                best_order = order
+                best_res = res
+                best_aic = aic
+        best_val_score = min_score if np.isfinite(min_score) else None
+
+    return i, best_res, best_order, best_val_score, best_aic, shortlist
 
 
 class ARIMAForecaster(Forecaster):
-    """Per-container ARIMA forecaster with AIC-based order selection on train.
+    """Per-container ARIMA forecaster with AIC shortlist and val MAE selection.
 
     Parameters
     ----------
@@ -126,7 +172,7 @@ class ARIMAForecaster(Forecaster):
     max_h : int, default 5
     tuning_dir : str or Path, default 'results/tuning'
     n_jobs : int, default -1
-        Joblib parallelism for fitting.
+        Joblib parallelism for fitting across containers.
     """
 
     def __init__(
@@ -143,28 +189,55 @@ class ARIMAForecaster(Forecaster):
         self.n_jobs = n_jobs
         self._fitted: list[object | None] = []
         self._chosen_order: list[tuple[int, int, int]] = []
+        self._best_val_score: list[float | None] = []
+        self._best_aic: list[float | None] = []
+        self._shortlists: list[list[tuple[int, int, int]]] = []
         self._ids: list[str] = []
         self.fallback_count_: int = 0
 
-    def fit(self, Y_train: np.ndarray, ids: list[str]) -> None:
-        """Select ARIMA order per container using AIC on train; fit in parallel.
+    def fit(
+        self,
+        Y_train: np.ndarray,
+        ids: list[str],
+        Y_full: np.ndarray | None = None,
+        val_start: int | None = None,
+        val_end: int | None = None,
+    ) -> None:
+        """Fit ARIMA orders on train, shortlist, and select by validation MAE.
 
         Parameters
         ----------
         Y_train : ndarray, shape [n_containers, n_train_steps]
         ids : list[str]
+        Y_full : ndarray, shape [n_containers, n_steps], optional
+        val_start : int, optional
+        val_end : int, optional
         """
         self._ids = list(ids)
         n_c = Y_train.shape[0]
 
+        val_origins: list[int] = []
+        if Y_full is not None and val_start is not None and val_end is not None:
+            val_origins = [t for t in range(val_start - 1, val_end - 5) if t >= 0]
+
         results = Parallel(n_jobs=self.n_jobs, backend="loky")(
-            delayed(_fit_one_container)(i, Y_train[i]) for i in range(n_c)
+            delayed(_fit_one_container)(
+                i,
+                Y_train[i],
+                Y_full[i] if Y_full is not None else None,
+                val_origins,
+                self.max_h,
+            )
+            for i in range(n_c)
         )
 
         # Sort by i to preserve container order
         results.sort(key=lambda x: x[0])
-        self._fitted = [r for _, r, _ in results]
-        self._chosen_order = [o for _, _, o in results]
+        self._fitted = [r[1] for r in results]
+        self._chosen_order = [r[2] for r in results]
+        self._best_val_score = [r[3] for r in results]
+        self._best_aic = [r[4] for r in results]
+        self._shortlists = [r[5] for r in results]
 
     def save_choices(self, target: str, run_tag: str | None = None) -> None:
         """Write per-container choices to results/tuning/<run_tag>/arima_<target>_choices.csv.
@@ -181,12 +254,16 @@ class ARIMAForecaster(Forecaster):
             res = self._fitted[i]
             p, d, q = self._chosen_order[i]
             trend = _trend_for_d(d)
-            aic = float(res.aic) if res is not None and hasattr(res, "aic") else None
+            aic = self._best_aic[i]
+            shortlist_str = ";".join([f"({sp},{sd},{sq})" for sp, sd, sq in self._shortlists[i]])
             rows.append({
                 "container_id": c_id,
                 "order": f"({p},{d},{q})",
                 "trend": trend,
+                "val_score": self._best_val_score[i],
                 "aic": aic,
+                "selected_by": "val_mae",
+                "shortlist": shortlist_str,
                 "fallback": res is None,
                 **({"run_tag": run_tag} if run_tag else {}),
             })

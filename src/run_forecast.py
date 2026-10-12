@@ -358,6 +358,8 @@ def run(
                 model.fit(Y_train, ids)
                 val_origins_for_k, _ = _origins_for_split(va_s, va_e, te_s, te_e, _MAX_H)
                 model.select_k(Y, val_origins_for_k, target=target, val_start=va_s, val_end=va_e, run_tag=run_tag)
+            elif model_name in ("ets", "arima"):
+                model.fit(Y_train, ids, Y_full=Y, val_start=va_s, val_end=va_e)
             else:
                 model.fit(Y_train, ids)
 
