@@ -105,6 +105,7 @@ class MAForecaster(Forecaster):
         target: str = "target",
         val_start: int | None = None,
         val_end: int | None = None,
+        run_tag: str | None = None,
     ) -> int:
         """Choose the best k on validation by mean MAE (h-averaged, container-averaged).
 
@@ -125,6 +126,8 @@ class MAForecaster(Forecaster):
         val_end : int or None
             One-past-the-end step index of the validation split.
             If None, no filtering is applied.
+        run_tag : str, optional
+            Run tag directory identifier.
 
         Returns
         -------
@@ -161,10 +164,19 @@ class MAForecaster(Forecaster):
         logger.info("MA: chose k=%d (val MAE=%.6f) for target=%s", best_k, best_mae, target)
 
         # Save tuning log
-        self.tuning_dir.mkdir(parents=True, exist_ok=True)
-        rows = [{"k": k, "val_mae": v, "chosen": k == best_k} for k, v in mae_by_k.items()]
+        dest_dir = self.tuning_dir / run_tag if run_tag else self.tuning_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {
+                "k": k,
+                "val_mae": v,
+                "chosen": k == best_k,
+                **({"run_tag": run_tag} if run_tag else {}),
+            }
+            for k, v in mae_by_k.items()
+        ]
         pd.DataFrame(rows).to_csv(
-            self.tuning_dir / f"ma_{target}_k_search.csv", index=False
+            dest_dir / f"ma_{target}_k_search.csv", index=False
         )
         return best_k
 

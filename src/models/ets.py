@@ -6,16 +6,15 @@ ETS (Exponential Smoothing) forecaster — per-container.
 Model selection
 ---------------
 Candidates = {simple, additive-trend, damped-additive-trend} x {Box-Cox off, on}
-= 6 combinations.  The combination with the lowest AICc on TRAIN only is chosen
+= 6 combinations. The combination with the lowest AICc on TRAIN only is chosen
 for each container.
 
 Prediction at origin t
 -----------------------
-The fitted parameters are FIXED (no re-fitting).  The model is re-initialised
-with the training-fitted parameters and run over Y[i, :t+1] using
-``ETSModel(...).fit(... initial_level=...).simulate`` or the
-``apply`` / re-initialise approach.  We use:
-    ``res.apply(y_history, refit=False)`` -> ``forecast(max_h)``
+The fitted parameters are FIXED (no re-fitting). At each origin t, the model is
+instantiated over history up to t with the training-estimated smoothing parameters
+(smoothing_level, smoothing_trend, damping_trend, lamda) fixed and run with
+fit(optimized=False, ...) to forecast max_h steps.
 
 Failures
 --------
@@ -24,36 +23,32 @@ last-value forecast, and the fallback is counted.
 
 Tuning logs
 -----------
-results/tuning/ets_<target>_choices.csv
-    container_id, config, aicc, fallback (bool)
+results/tuning/<run_tag>/ets_<target>_choices.csv
+    container_id, config, aicc, fallback (bool), run_tag
 """
 
 from __future__ import annotations
 
 import logging
 import warnings
-from itertools import product
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from models.base import MODELS, Forecaster
 
 logger = logging.getLogger(__name__)
 
-# Candidate configurations: (error, trend, damped, use_boxcox)
+# Candidate configurations: (trend, damped, use_boxcox)
 _CONFIGS: list[tuple] = [
-    # simple exponential smoothing
-    ("add", None, False, False),
-    ("add", None, False, True),
-    # additive trend (Holt)
-    ("add", "add", False, False),
-    ("add", "add", False, True),
-    # damped additive trend
-    ("add", "add", True, False),
-    ("add", "add", True, True),
+    (None, False, False),
+    (None, False, True),
+    ("add", False, False),
+    ("add", False, True),
+    ("add", True, False),
+    ("add", True, True),
 ]
 
 _CONFIG_NAMES = [
@@ -68,17 +63,16 @@ _CONFIG_NAMES = [
 
 def _fit_ets(
     y: np.ndarray,
-    error: str,
     trend: str | None,
     damped: bool,
     use_boxcox: bool,
 ) -> object | None:
-    """Fit a single ETS model. Returns the fitted result or None on failure.
+    """Fit a single ExponentialSmoothing model. Return fitted result or None.
 
     Parameters
     ----------
     y : ndarray, shape [n_train]
-    error, trend : str or None
+    trend : str or None
     damped : bool
     use_boxcox : bool
 
@@ -86,15 +80,18 @@ def _fit_ets(
     -------
     fitted result or None
     """
+    if use_boxcox and np.any(y <= 0):
+        return None
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            kwargs: dict = dict(error=error, trend=trend, damped_trend=damped)
-            if use_boxcox:
-                kwargs["initialization_method"] = "estimated"
-                kwargs["use_boxcox"] = True
-            m = ETSModel(y, **kwargs)
-            res = m.fit(disp=False, maxiter=200)
+            m = ExponentialSmoothing(
+                y,
+                trend=trend,
+                damped_trend=damped,
+                use_boxcox=use_boxcox,
+            )
+            res = m.fit()
         return res
     except Exception:
         return None
@@ -120,9 +117,9 @@ class ETSForecaster(Forecaster):
         super().__init__(name)
         self.max_h = max_h
         self.tuning_dir = Path(tuning_dir)
-        # Per-container fitted results and chosen config indices
         self._fitted: list[object | None] = []
-        self._chosen_cfg: list[int] = []  # index into _CONFIGS
+        self._chosen_cfg: list[int] = []
+        self._best_aicc: list[float] = []
         self._ids: list[str] = []
         self.fallback_count_: int = 0
 
@@ -137,20 +134,20 @@ class ETSForecaster(Forecaster):
         self._ids = list(ids)
         self._fitted = []
         self._chosen_cfg = []
+        self._best_aicc = []
         self.fallback_count_ = 0
-        log_rows: list[dict] = []
 
-        for i, c_id in enumerate(ids):
+        for i, _ in enumerate(ids):
             y = Y_train[i]
             best_res = None
             best_aicc = np.inf
             best_cfg_idx = 0
 
-            for cfg_idx, (error, trend, damped, bc) in enumerate(_CONFIGS):
-                res = _fit_ets(y, error, trend, damped, bc)
+            for cfg_idx, (trend, damped, bc) in enumerate(_CONFIGS):
+                res = _fit_ets(y, trend, damped, bc)
                 if res is not None:
                     try:
-                        aicc = res.aicc
+                        aicc = float(res.aicc)
                         if np.isfinite(aicc) and aicc < best_aicc:
                             best_aicc = aicc
                             best_res = res
@@ -160,41 +157,32 @@ class ETSForecaster(Forecaster):
 
             self._fitted.append(best_res)
             self._chosen_cfg.append(best_cfg_idx)
-            log_rows.append({
-                "container_id": c_id,
-                "config": _CONFIG_NAMES[best_cfg_idx],
-                "aicc": best_aicc if np.isfinite(best_aicc) else None,
-            })
+            self._best_aicc.append(best_aicc)
 
-        self._save_tuning_log(log_rows, target="__fit__")
-
-    def _save_tuning_log(self, rows: list[dict], target: str) -> None:
-        """Write tuning log CSV (called by fit and predict_origins via runner)."""
-        self.tuning_dir.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(rows).to_csv(
-            self.tuning_dir / f"ets_{target}_choices.csv", index=False
-        )
-
-    def save_choices(self, target: str) -> None:
-        """Persist per-container choices to results/tuning/ets_<target>_choices.csv.
+    def save_choices(self, target: str, run_tag: str | None = None) -> None:
+        """Persist per-container choices to results/tuning/<run_tag>/ets_<target>_choices.csv.
 
         Parameters
         ----------
         target : str
             'cpu' or 'mem' (used in filename).
+        run_tag : str, optional
+            Run tag directory identifier.
         """
         rows = [
             {
                 "container_id": self._ids[i],
                 "config": _CONFIG_NAMES[self._chosen_cfg[i]],
-                "aicc": None,  # already saved in fit; kept for schema compliance
+                "aicc": self._best_aicc[i] if np.isfinite(self._best_aicc[i]) else None,
                 "fallback": self._fitted[i] is None,
+                **({"run_tag": run_tag} if run_tag else {}),
             }
             for i in range(len(self._ids))
         ]
-        self.tuning_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir = self.tuning_dir / run_tag if run_tag else self.tuning_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).to_csv(
-            self.tuning_dir / f"ets_{target}_choices.csv", index=False
+            dest_dir / f"ets_{target}_choices.csv", index=False
         )
 
     def predict_origins(
@@ -223,9 +211,10 @@ class ETSForecaster(Forecaster):
 
         for i in range(n_c):
             res = self._fitted[i]
+            cfg_idx = self._chosen_cfg[i]
             for j, t in enumerate(origins):
                 y_hist = Y[i, : t + 1]
-                forecast = self._forecast_one(res, y_hist, max_h)
+                forecast = self._forecast_one(res, cfg_idx, y_hist, max_h)
                 if forecast is None:
                     fallbacks += 1
                     forecast = np.full(max_h, Y[i, t], dtype=np.float64)
@@ -235,13 +224,18 @@ class ETSForecaster(Forecaster):
         return preds
 
     def _forecast_one(
-        self, res: object | None, y_hist: np.ndarray, max_h: int
+        self,
+        res: object | None,
+        cfg_idx: int,
+        y_hist: np.ndarray,
+        max_h: int,
     ) -> np.ndarray | None:
         """Apply fixed ETS params to y_hist and forecast max_h steps.
 
         Parameters
         ----------
-        res : fitted ETSResults or None
+        res : fitted model result or None
+        cfg_idx : int
         y_hist : ndarray, shape [t+1]
         max_h : int
 
@@ -251,11 +245,27 @@ class ETSForecaster(Forecaster):
         """
         if res is None:
             return None
+        trend, damped, use_boxcox = _CONFIGS[cfg_idx]
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                applied = res.apply(y_hist, refit=False)
-                fc = applied.forecast(max_h)
+                kw = {
+                    k: v
+                    for k, v in res.params.items()
+                    if k in ["smoothing_level", "smoothing_trend", "damping_trend"]
+                    and not np.isnan(v)
+                }
+                lam = res.params.get("lamda", False) if use_boxcox else False
+                if use_boxcox and np.any(y_hist <= 0):
+                    return None
+                m_hist = ExponentialSmoothing(
+                    y_hist,
+                    trend=trend,
+                    damped_trend=damped,
+                    use_boxcox=lam,
+                )
+                res_hist = m_hist.fit(optimized=False, **kw)
+                fc = res_hist.forecast(max_h)
             return np.asarray(fc, dtype=np.float64)
         except Exception:
             return None

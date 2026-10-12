@@ -39,7 +39,7 @@ _TUNING_DIR = _RESULTS_ROOT / "tuning"
 _METRICS_COLS = [
     "run_id", "dataset", "model", "horizon_steps", "target",
     "container_id", "split", "mae", "rmse", "smape", "mase",
-    "train_time_s", "pred_latency_ms", "model_size_kb", "seed",
+    "train_time_s", "pred_latency_ms", "model_size_kb", "fallback_rate", "seed",
 ]
 
 # Expected columns for predictions parquet (AGENTS.md §12)
@@ -160,10 +160,11 @@ def save_predictions(
     model: str,
     horizon: int,
     target: str,
+    run_tag: str | None = None,
 ) -> None:
     """Save val+test predictions to a parquet file (append if file exists).
 
-    File path: results/predictions/<dataset>_<model>_h<horizon>_<target>.parquet
+    File path: results/predictions/<run_tag>/<dataset>_<model>_h<horizon>_<target>.parquet
     Columns: run_id, container_id, origin_step, target_step, split, y_true, y_pred.
 
     If the file already exists both the old and new rows are kept (different run_ids).
@@ -175,10 +176,13 @@ def save_predictions(
     dataset, model : str
     horizon : int
     target : str  ('cpu' or 'mem')
+    run_tag : str, optional
+        Subdirectory under predictions to avoid collisions between runs.
     """
-    _PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
+    dest_dir = _PREDICTIONS_DIR / run_tag if run_tag else _PREDICTIONS_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{dataset}_{model}_h{horizon}_{target}.parquet"
-    dest = _PREDICTIONS_DIR / filename
+    dest = dest_dir / filename
 
     missing = set(_PRED_COLS) - set(df.columns)
     if missing:

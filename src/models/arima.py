@@ -166,13 +166,15 @@ class ARIMAForecaster(Forecaster):
         self._fitted = [r for _, r, _ in results]
         self._chosen_order = [o for _, _, o in results]
 
-    def save_choices(self, target: str) -> None:
-        """Write per-container choices to results/tuning/arima_<target>_choices.csv.
+    def save_choices(self, target: str, run_tag: str | None = None) -> None:
+        """Write per-container choices to results/tuning/<run_tag>/arima_<target>_choices.csv.
 
         Parameters
         ----------
         target : str
             'cpu' or 'mem'.
+        run_tag : str, optional
+            Run tag directory identifier.
         """
         rows = []
         for i, c_id in enumerate(self._ids):
@@ -186,10 +188,12 @@ class ARIMAForecaster(Forecaster):
                 "trend": trend,
                 "aic": aic,
                 "fallback": res is None,
+                **({"run_tag": run_tag} if run_tag else {}),
             })
-        self.tuning_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir = self.tuning_dir / run_tag if run_tag else self.tuning_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).to_csv(
-            self.tuning_dir / f"arima_{target}_choices.csv", index=False
+            dest_dir / f"arima_{target}_choices.csv", index=False
         )
 
     def predict_origins(

@@ -49,12 +49,12 @@ RNG = np.random.default_rng(0)
 
 @pytest.fixture(scope="module")
 def Y_synth() -> np.ndarray:
-    """Synthetic AR(1)-like series: y[t] = 0.8*y[t-1] + noise."""
+    """Synthetic AR(1)-like series: y[t] = 0.5 + 0.8*(y[t-1] - 0.5) + noise."""
     Y = np.zeros((N_CONTAINERS, N_STEPS))
-    Y[:, 0] = RNG.uniform(0.2, 0.8, N_CONTAINERS)
+    Y[:, 0] = RNG.uniform(0.4, 0.6, N_CONTAINERS)
     for t in range(1, N_STEPS):
-        Y[:, t] = 0.8 * Y[:, t - 1] + RNG.normal(0, 0.02, N_CONTAINERS)
-    Y = np.clip(Y, 0.0, 1.0)
+        Y[:, t] = 0.5 + 0.8 * (Y[:, t - 1] - 0.5) + RNG.normal(0, 0.05, N_CONTAINERS)
+    Y = np.clip(Y, 0.05, 0.95)
     return Y
 
 
@@ -283,7 +283,7 @@ def test_runner_writes_and_appends(tmp_path, monkeypatch):
     _METRICS_COLS = [
         "run_id", "dataset", "model", "horizon_steps", "target",
         "container_id", "split", "mae", "rmse", "smape", "mase",
-        "train_time_s", "pred_latency_ms", "model_size_kb", "seed",
+        "train_time_s", "pred_latency_ms", "model_size_kb", "fallback_rate", "seed",
     ]
 
     row1 = {c: "r1" if c in ("run_id", "dataset", "model", "target", "container_id", "split") else 1.0
@@ -303,3 +303,46 @@ def test_runner_writes_and_appends(tmp_path, monkeypatch):
     assert set(_METRICS_COLS).issubset(set(df.columns)), "Missing columns in metrics_long.csv"
     assert len(df) == 2, f"Expected 2 rows after two appends, got {len(df)}"
     assert set(df["run_id"]) == {"r1", "r2"}, "Both run_ids must be present"
+
+
+def test_ets_arima_no_fallbacks_and_differ_from_naive(
+    ets_fitted, arima_fitted, Y_synth, split_info
+):
+    """On synthetic AR(1), ETS and ARIMA must have fallback_rate == 0 and
+    differ from naive forecasts at a majority of origins.
+    """
+    (tr_s, tr_e), (va_s, va_e), (te_s, te_e) = split_info
+    origins = list(range(va_s, va_e))
+    n_o = len(origins)
+
+    # ETS
+    ets_preds = ets_fitted.predict_origins(Y_synth, origins, max_h=MAX_H)
+    assert ets_fitted.fallback_count_ == 0, (
+        f"ETS fallback_count_ must be 0, got {ets_fitted.fallback_count_}"
+    )
+
+    for i in range(N_CONTAINERS):
+        diff_origins = 0
+        for j, t in enumerate(origins):
+            naive_fc = Y_synth[i, t]
+            if np.any(np.abs(ets_preds[i, j, :] - naive_fc) > 1e-4):
+                diff_origins += 1
+        assert diff_origins > n_o / 2, (
+            f"ETS container {i} differed from naive at only {diff_origins}/{n_o} origins"
+        )
+
+    # ARIMA
+    arima_preds = arima_fitted.predict_origins(Y_synth, origins, max_h=MAX_H)
+    assert arima_fitted.fallback_count_ == 0, (
+        f"ARIMA fallback_count_ must be 0, got {arima_fitted.fallback_count_}"
+    )
+
+    for i in range(N_CONTAINERS):
+        diff_origins = 0
+        for j, t in enumerate(origins):
+            naive_fc = Y_synth[i, t]
+            if np.any(np.abs(arima_preds[i, j, :] - naive_fc) > 1e-4):
+                diff_origins += 1
+        assert diff_origins > n_o / 2, (
+            f"ARIMA container {i} differed from naive at only {diff_origins}/{n_o} origins"
+        )

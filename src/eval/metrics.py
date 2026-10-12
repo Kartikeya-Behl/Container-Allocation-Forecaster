@@ -154,6 +154,7 @@ def container_metrics(
     model_size_kb: float,
     seed: int,
     naive_mae1_map: Mapping[str, float] | pd.DataFrame | None = None,
+    fallback_rate: float = 0.0,
 ) -> list[dict]:
     """Compute per-container per-split metrics and format as AGENTS.md schema rows.
 
@@ -188,6 +189,8 @@ def container_metrics(
         Map of container_id -> naive_mae1 on train. If DataFrame, looks for column
         f"naive_mae1_{target}" or "naive_mae1". If None, attempts to load from
         data/processed/container_meta_8h.parquet if present.
+    fallback_rate : float, default 0.0
+        Fallback rate over all forecasts for this model and target.
 
     Returns
     -------
@@ -242,6 +245,7 @@ def container_metrics(
             "train_time_s": train_time_s,
             "pred_latency_ms": pred_latency_ms,
             "model_size_kb": model_size_kb,
+            "fallback_rate": fallback_rate,
             "seed": seed,
         })
     return rows

@@ -80,8 +80,8 @@
 ## 12. Results Schema
 
 - Every model evaluation appends rows to `results/metrics_long.csv` with columns:
-  `run_id, dataset, model, horizon_steps, target(cpu|mem), container_id, split, mae, rmse, smape, mase, train_time_s, pred_latency_ms, model_size_kb, seed`.
-- Predictions for **both val and test** splits are saved to `results/predictions/<dataset>_<model>_h<H>_<target>.parquet` with columns `container_id, origin_step, target_step, split, y_true, y_pred`. Val predictions are needed to tune the safety margin; test predictions are for final reporting.
+  `run_id, dataset, model, horizon_steps, target(cpu|mem), container_id, split, mae, rmse, smape, mase, train_time_s, pred_latency_ms, model_size_kb, fallback_rate, seed`.
+- Predictions for **both val and test** splits are saved to `results/predictions/<run_tag>/<dataset>_<model>_h<H>_<target>.parquet` with columns `container_id, origin_step, target_step, split, y_true, y_pred`. Val predictions are needed to tune the safety margin; test predictions are for final reporting.
 - Never overwrite old runs; append. If a predictions file already exists, append with a new run_id so both sets are preserved.
 - Tuning logs go to `results/tuning/`; best hyperparameters are saved to `results/tuning/best_params.json`; all tuning records are append-only with a run_id.
 - Headline results are always on all 600 containers; tiers are for stratified reporting only.

@@ -198,6 +198,7 @@ def _compute_metrics(
     model_size_kb: float,
     seed: int,
     naive_mae1_map: dict[str, float],
+    fallback_rate: float = 0.0,
 ) -> list[dict]:
     """Compute per-container per-horizon per-split metrics from pred_rows.
 
@@ -209,6 +210,7 @@ def _compute_metrics(
     train_time_s, pred_latency_ms, model_size_kb : float
     seed : int
     naive_mae1_map : dict[str, float]
+    fallback_rate : float, default 0.0
 
     Returns
     -------
@@ -217,13 +219,8 @@ def _compute_metrics(
     if not pred_rows:
         return []
     df = pd.DataFrame(pred_rows)
-    metric_rows = []
-    for (c_id, h, sp), grp in df.groupby(["container_id", "target_step", "split"]):
-        # Compute horizon from the group (all rows have same target_step)
-        # We need per-horizon metrics: group by container_id, horizon, split.
-        pass
-    # Re-group correctly: horizon = target_step - origin_step
     df["horizon"] = df["target_step"] - df["origin_step"]
+    metric_rows = []
     for (c_id, h, sp), grp in df.groupby(["container_id", "horizon", "split"]):
         yt = grp["y_true"].to_numpy(dtype=np.float64)
         yp = grp["y_pred"].to_numpy(dtype=np.float64)
@@ -247,6 +244,7 @@ def _compute_metrics(
             "train_time_s": train_time_s,
             "pred_latency_ms": pred_latency_ms,
             "model_size_kb": model_size_kb,
+            "fallback_rate": fallback_rate,
             "seed": seed,
         })
     return metric_rows
@@ -349,16 +347,16 @@ def run(
                 # MA needs fit + select_k on val origins (target steps strictly in val)
                 model.fit(Y_train, ids)
                 val_origins_for_k, _ = _origins_for_split(va_s, va_e, te_s, te_e, _MAX_H)
-                model.select_k(Y, val_origins_for_k, target=target, val_start=va_s, val_end=va_e)
+                model.select_k(Y, val_origins_for_k, target=target, val_start=va_s, val_end=va_e, run_tag=run_tag)
             else:
                 model.fit(Y_train, ids)
 
             fit_time_s = time.perf_counter() - t0_fit
             logger.info("Fit done in %.2fs", fit_time_s)
 
-            # Save choices / tuning logs
+            # Save choices / tuning logs inside run_tag directory
             if hasattr(model, "save_choices"):
-                model.save_choices(target)
+                model.save_choices(target, run_tag=run_tag)
 
             # ---- predict all needed origins ----------------------------------
             val_origins, test_origins = _origins_for_split(va_s, va_e, te_s, te_e, _MAX_H)
@@ -386,6 +384,7 @@ def run(
             # ---- build prediction rows and save ------------------------------
             # Map origin index in all_origins -> index in preds_all
             origin_to_j = {o: j for j, o in enumerate(all_origins)}
+            all_pred_rows: list[dict] = []
 
             for split_name, split_origins in [("val", val_origins), ("test", test_origins)]:
                 s_j = [origin_to_j[o] for o in split_origins]
@@ -397,35 +396,33 @@ def run(
                 )
                 if not rows:
                     continue
+                all_pred_rows.extend(rows)
                 pred_df = pd.DataFrame(rows)
                 for h in range(1, _MAX_H + 1):
                     h_df = pred_df[pred_df["target_step"] - pred_df["origin_step"] == h].copy()
                     if h_df.empty:
                         continue
-                    save_predictions(h_df, _DATASET_TAG, model_name, h, target)
+                    save_predictions(h_df, _DATASET_TAG, model_name, h, target, run_tag=run_tag)
 
-            # ---- metrics ----------------------------------------------------
+            # ---- fallbacks & metrics -----------------------------------------
+            n_forecasts = len(ids) * len(all_origins)
+            fallback_cnt = getattr(model, "fallback_count_", 0)
+            fallback_rate = float(fallback_cnt / max(1, n_forecasts)) if hasattr(model, "fallback_count_") else 0.0
+
+            if fallback_rate > 0.05:
+                logger.warning(
+                    "WARNING: Fallback rate for %s/%s is %.2f%% (%d/%d), which exceeds 5%%",
+                    model_name, target, fallback_rate * 100, fallback_cnt, n_forecasts,
+                )
+            else:
+                logger.info(
+                    "Fallback rate for %s/%s: %d/%d (%.2f%%)",
+                    model_name, target, fallback_cnt, n_forecasts, fallback_rate * 100,
+                )
+
             naive_mae1_map = _load_naive_mae1(target)
-
-            # Rebuild all pred rows for metric computation
-            all_pred_rows = _build_pred_rows(
-                preds_all, Y, ids, all_origins, "all",
-                run_id, va_s, va_e, te_s, te_e, _MAX_H,
-            )
-            # fix split labels (already correct in rows)
-            all_pred_rows_fixed: list[dict] = []
-            for r in all_pred_rows:
-                ts = r["target_step"]
-                if va_s <= ts < va_e:
-                    r["split"] = "val"
-                elif te_s <= ts < te_e:
-                    r["split"] = "test"
-                else:
-                    continue
-                all_pred_rows_fixed.append(r)
-
             metric_rows = _compute_metrics(
-                all_pred_rows_fixed,
+                all_pred_rows,
                 run_id=run_id,
                 dataset=_DATASET_TAG,
                 model_name=model_name,
@@ -435,15 +432,14 @@ def run(
                 model_size_kb=model_size_kb,
                 seed=seed,
                 naive_mae1_map=naive_mae1_map,
+                fallback_rate=fallback_rate,
             )
 
             if metric_rows:
                 append_metrics(metric_rows)
-                logger.info("Appended %d metric rows", len(metric_rows))
-
-            # Log fallbacks
-            if hasattr(model, "fallback_count_"):
-                logger.info("Fallbacks: %d", model.fallback_count_)
+                logger.info("Appended %d metric rows to results/metrics_long.csv", len(metric_rows))
+            else:
+                logger.warning("No metric rows computed for %s/%s", model_name, target)
 
             # Save run record
             save_run(
@@ -454,7 +450,8 @@ def run(
                     "fit_time_s": fit_time_s,
                     "pred_latency_ms": pred_latency_ms,
                     "model_size_kb": model_size_kb,
-                    "fallbacks": getattr(model, "fallback_count_", 0),
+                    "fallback_count": fallback_cnt,
+                    "fallback_rate": fallback_rate,
                     "machine": minfo,
                 },
                 config={
