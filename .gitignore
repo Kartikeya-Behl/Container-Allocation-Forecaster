@@ -53,3 +53,7 @@ handover_raw.txt
 # Secrets / env files
 .env
 *.secret
+
+results/predictions/
+results/tuning/trees*/optuna.db
+results/metrics_long_val20g.csv
