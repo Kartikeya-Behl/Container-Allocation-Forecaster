@@ -57,3 +57,9 @@ handover_raw.txt
 results/predictions/
 results/tuning/trees*/optuna.db
 results/metrics_long_val20g.csv
+results/metrics_eval_full600_run1.csv
+results/trees_timing_quick.json
+results/full600_*_2026*Z/
+results/val20*_*_2026*Z/
+results/tuning/val20*/
+results/tuning/trees_quick/
