@@ -1,0 +1,117 @@
+{
+  "xgb/cpu/h1": {
+    "params": {
+      "n_lags": 20,
+      "learning_rate": 0.09975285088112931,
+      "max_depth": 8,
+      "min_child_weight": 1,
+      "subsample": 0.9341690249097843,
+      "colsample_bytree": 0.7979247594850154,
+      "reg_lambda": 3.8971979138824695,
+      "reg_alpha": 0.023231730385201533,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 998,
+    "val_mae": 0.010154042462925693,
+    "n_trials": 60,
+    "tuning_time_s": 457.997518
+  },
+  "xgb/cpu/h3": {
+    "params": {
+      "n_lags": 20,
+      "learning_rate": 0.0642657097743289,
+      "max_depth": 8,
+      "min_child_weight": 5,
+      "subsample": 0.9065107872107754,
+      "colsample_bytree": 0.7488355136300111,
+      "reg_lambda": 0.5114570036997833,
+      "reg_alpha": 0.02553830277886559,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 995,
+    "val_mae": 0.012369117671423043,
+    "n_trials": 60,
+    "tuning_time_s": 428.265691
+  },
+  "xgb/cpu/h5": {
+    "params": {
+      "n_lags": 20,
+      "learning_rate": 0.1197868590205407,
+      "max_depth": 7,
+      "min_child_weight": 1,
+      "subsample": 0.998206745945245,
+      "colsample_bytree": 0.8227009671260734,
+      "reg_lambda": 0.23512343481683634,
+      "reg_alpha": 0.06082355292851329,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 691,
+    "val_mae": 0.013390978171829325,
+    "n_trials": 60,
+    "tuning_time_s": 388.45331400000003
+  },
+  "xgb/mem/h1": {
+    "params": {
+      "n_lags": 5,
+      "learning_rate": 0.146501361250436,
+      "max_depth": 4,
+      "min_child_weight": 3,
+      "subsample": 0.6911740650167767,
+      "colsample_bytree": 0.7708431154505025,
+      "reg_lambda": 4.325432427964557,
+      "reg_alpha": 0.8607305832563434,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1,
+    "val_mae": 0.0006581765029541226,
+    "n_trials": 60,
+    "tuning_time_s": 26.218044
+  },
+  "xgb/mem/h3": {
+    "params": {
+      "n_lags": 10,
+      "learning_rate": 0.02165478837442558,
+      "max_depth": 2,
+      "min_child_weight": 15,
+      "subsample": 0.8999808594101351,
+      "colsample_bytree": 0.8395661887575656,
+      "reg_lambda": 0.12014358305265042,
+      "reg_alpha": 0.007155775699489775,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1000,
+    "val_mae": 0.0010596185235465436,
+    "n_trials": 60,
+    "tuning_time_s": 190.688528
+  },
+  "xgb/mem/h5": {
+    "params": {
+      "n_lags": 10,
+      "learning_rate": 0.013034004053342289,
+      "max_depth": 2,
+      "min_child_weight": 1,
+      "subsample": 0.8530955763991973,
+      "colsample_bytree": 0.7424043001746816,
+      "reg_lambda": 0.6129095053879753,
+      "reg_alpha": 0.005452720204334613,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1000,
+    "val_mae": 0.0011732197966860811,
+    "n_trials": 60,
+    "tuning_time_s": 171.028937
+  },
+  "rf/cpu/h1": {
+    "params": {
+      "n_lags": 10,
+      "n_estimators": 300,
+      "max_depth": 6,
+      "min_samples_leaf": 20,
+      "max_features": 0.6
+    },
+    "n_estimators": null,
+    "val_mae": 0.011902070904227945,
+    "n_trials": 2,
+    "tuning_time_s": 16.911564000000002
+  }
+}

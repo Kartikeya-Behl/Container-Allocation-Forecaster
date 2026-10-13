@@ -1,0 +1,156 @@
+{
+  "xgb/cpu/h1": {
+    "params": {
+      "n_lags": 45,
+      "learning_rate": 0.08810972103954262,
+      "max_depth": 8,
+      "min_child_weight": 4,
+      "subsample": 0.9886508219784523,
+      "colsample_bytree": 0.921570803103947,
+      "reg_lambda": 4.770829161928405,
+      "reg_alpha": 0.052364249568793264,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1415,
+    "val_mae": 0.01006500377843347,
+    "n_trials": 50,
+    "tuning_time_s": 790.873922
+  },
+  "xgb/cpu/h3": {
+    "params": {
+      "n_lags": 60,
+      "learning_rate": 0.04395283954595572,
+      "max_depth": 8,
+      "min_child_weight": 7,
+      "subsample": 0.9644811882578159,
+      "colsample_bytree": 0.963499515753403,
+      "reg_lambda": 0.3488344363273857,
+      "reg_alpha": 0.04391317280381182,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1278,
+    "val_mae": 0.012272853206835655,
+    "n_trials": 50,
+    "tuning_time_s": 1026.207462
+  },
+  "xgb/cpu/h5": {
+    "params": {
+      "n_lags": 30,
+      "learning_rate": 0.03327081029039162,
+      "max_depth": 7,
+      "min_child_weight": 1,
+      "subsample": 0.9158005747453349,
+      "colsample_bytree": 0.745999984945301,
+      "reg_lambda": 0.2149318006242171,
+      "reg_alpha": 0.017301297147276844,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1874,
+    "val_mae": 0.013307011734890455,
+    "n_trials": 50,
+    "tuning_time_s": 734.846791
+  },
+  "xgb/mem/h1": {
+    "params": {
+      "n_lags": 3,
+      "learning_rate": 0.01871901249028735,
+      "max_depth": 11,
+      "min_child_weight": 9,
+      "subsample": 0.7085840317068922,
+      "colsample_bytree": 0.7186467567474473,
+      "reg_lambda": 2.6498378519629187,
+      "reg_alpha": 0.9222471911711181,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1,
+    "val_mae": 0.0006581703332002611,
+    "n_trials": 50,
+    "tuning_time_s": 24.567791
+  },
+  "xgb/mem/h3": {
+    "params": {
+      "n_lags": 10,
+      "learning_rate": 0.03876596745763919,
+      "max_depth": 11,
+      "min_child_weight": 17,
+      "subsample": 0.7948157365336459,
+      "colsample_bytree": 0.8661559296358079,
+      "reg_lambda": 0.18057021523983247,
+      "reg_alpha": 0.010788303958056682,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1993,
+    "val_mae": 0.0010492134136285125,
+    "n_trials": 50,
+    "tuning_time_s": 212.645637
+  },
+  "xgb/mem/h5": {
+    "params": {
+      "n_lags": 10,
+      "learning_rate": 0.029097292552366993,
+      "max_depth": 3,
+      "min_child_weight": 1,
+      "subsample": 0.8550004418224745,
+      "colsample_bytree": 0.7800793358396405,
+      "reg_lambda": 0.5122931504875091,
+      "reg_alpha": 0.004712495977037692,
+      "objective": "reg:absoluteerror"
+    },
+    "n_estimators": 1999,
+    "val_mae": 0.0011223147506130206,
+    "n_trials": 50,
+    "tuning_time_s": 246.135613
+  },
+  "rf/cpu/h1": {
+    "params": {
+      "n_lags": 30,
+      "n_estimators": 300,
+      "max_depth": 20,
+      "min_samples_leaf": 10,
+      "max_features": 1.0
+    },
+    "n_estimators": null,
+    "val_mae": 0.01073089261785046,
+    "n_trials": 12,
+    "tuning_time_s": 577.108093
+  },
+  "rf/cpu/h5": {
+    "params": {
+      "n_lags": 30,
+      "n_estimators": 300,
+      "max_depth": 20,
+      "min_samples_leaf": 10,
+      "max_features": 1.0
+    },
+    "n_estimators": null,
+    "val_mae": 0.014470251940250034,
+    "n_trials": 12,
+    "tuning_time_s": 578.010358
+  },
+  "rf/mem/h1": {
+    "params": {
+      "n_lags": 20,
+      "n_estimators": 200,
+      "max_depth": 6,
+      "min_samples_leaf": 10,
+      "max_features": 0.33
+    },
+    "n_estimators": null,
+    "val_mae": 0.0006719657646615697,
+    "n_trials": 12,
+    "tuning_time_s": 355.857709
+  },
+  "rf/mem/h5": {
+    "params": {
+      "n_lags": 20,
+      "n_estimators": 200,
+      "max_depth": 6,
+      "min_samples_leaf": 10,
+      "max_features": 0.33
+    },
+    "n_estimators": null,
+    "val_mae": 0.0012873311840432289,
+    "n_trials": 12,
+    "tuning_time_s": 347.527533
+  }
+}

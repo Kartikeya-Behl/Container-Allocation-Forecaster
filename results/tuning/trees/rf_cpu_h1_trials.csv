@@ -1,0 +1,3 @@
+number,value,datetime_start,datetime_complete,duration,params_max_depth,params_max_features,params_min_samples_leaf,params_n_estimators,params_n_lags,user_attrs_fit_time_s,state
+0,0.011945731211458097,2026-10-12 13:04:16.424921,2026-10-12 13:04:22.172280,0 days 00:00:05.747359,6,1.0,10,100,5,4.061877300031483,COMPLETE
+1,0.011902070904227945,2026-10-12 13:04:22.185692,2026-10-12 13:04:33.349897,0 days 00:00:11.164205,6,0.6,20,300,10,10.428543999965768,COMPLETE

@@ -57,7 +57,7 @@ class Cache:
 
 def fit_xgb(p, Xtr, ytr, Xva, yva):
     import xgboost as xgb
-    m = xgb.XGBRegressor(n_estimators=1000, early_stopping_rounds=50, eval_metric="mae",
+    m = xgb.XGBRegressor(n_estimators=2000, early_stopping_rounds=50, eval_metric="mae",
                          tree_method="hist", n_jobs=-1, random_state=SEED, **p)
     t0 = time.perf_counter()
     m.fit(Xtr, ytr, eval_set=[(Xva, yva)], verbose=False)
@@ -84,6 +84,10 @@ def size_kb(m, kind):
 
 
 def latency_ms(m, kind, X, n=100):
+    if kind == "xgb":
+        m.get_booster().set_param({"nthread": 1})
+    else:
+        m.set_params(n_jobs=1)
     idx = np.random.RandomState(SEED).randint(0, len(X), n)
     ts = []
     for i in idx:
@@ -94,10 +98,10 @@ def latency_ms(m, kind, X, n=100):
 
 
 def trial_xgb(tr, D):
-    nl = tr.suggest_categorical("n_lags", [3, 5, 10, 20])
+    nl = tr.suggest_categorical("n_lags", [3, 5, 10, 20, 30, 45, 60])
     p = dict(
         learning_rate=tr.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        max_depth=tr.suggest_int("max_depth", 2, 8),
+        max_depth=tr.suggest_int("max_depth", 2, 12),
         min_child_weight=tr.suggest_int("min_child_weight", 1, 20),
         subsample=tr.suggest_float("subsample", 0.6, 1.0),
         colsample_bytree=tr.suggest_float("colsample_bytree", 0.6, 1.0),
@@ -112,7 +116,7 @@ def trial_xgb(tr, D):
 
 
 def trial_rf(tr, D):
-    nl = tr.suggest_categorical("n_lags", [3, 5, 10, 20])
+    nl = tr.suggest_categorical("n_lags", [3, 5, 10, 20, 30, 45, 60])
     p = dict(
         n_estimators=tr.suggest_categorical("n_estimators", [100, 200, 300]),
         max_depth=tr.suggest_categorical("max_depth", [6, 10, 14, 20]),
@@ -127,10 +131,12 @@ def trial_rf(tr, D):
 def tune_one(model, tgt, h, Y, ids, bounds, n_trials, out, best, best_path):
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    name = f"{model}_{tgt}_h{h}"
+    name = f"{model}_{tgt}_h{h}_v2"
     study = optuna.create_study(
         study_name=name, direction="minimize", sampler=optuna.samplers.TPESampler(seed=SEED),
         storage="sqlite:///" + (out / "optuna.db").as_posix(), load_if_exists=True)
+    if not study.trials and f"{model}/{tgt}/h{h}" in best:
+        study.enqueue_trial(best[f"{model}/{tgt}/h{h}"]["params"])
     done = len([t for t in study.trials if t.state.name == "COMPLETE"])
     D = Cache(Y, ids, bounds, h)
     obj = (lambda tr: trial_xgb(tr, D)) if model == "xgb" else (lambda tr: trial_rf(tr, D))
@@ -229,5 +235,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
