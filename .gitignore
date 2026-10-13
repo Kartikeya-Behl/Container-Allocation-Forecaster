@@ -63,3 +63,6 @@ results/full600_*_2026*Z/
 results/val20*_*_2026*Z/
 results/tuning/val20*/
 results/tuning/trees_quick/
+# Internal agent guidelines and handover specs
+docs/
+AGENTS.md
